@@ -2,8 +2,9 @@ import Darwin
 import Foundation
 
 /// Formats -ls lines identically to /usr/bin/find's `ls -dgils` output:
-/// `%9ju %8jd <strmode> %3ju %-16s %-16s %8jd <date> path[ -> target]`
-/// (column layout verified against find on macOS).
+/// `%6ju %8jd <strmode> %4ju %-16s %-16s %8jd <date> path[ -> target]`
+/// (column widths verified against find with both small /dev inodes and large APFS
+/// ones).
 enum LsFormat {
     static let sixMonths: Int64 = (365 / 2) * 86400
 
@@ -35,7 +36,7 @@ enum LsFormat {
             sizeField = pad(String(info.size), width: 8)
         }
 
-        var line = pad(String(info.inode), width: 9)
+        var line = pad(String(info.inode), width: 6)
         line += " " + pad(String(info.allocatedBlocks), width: 8)
         line += " " + modeString  // strmode includes the trailing attribute char.
         line += pad(String(info.linkCount), width: 4)

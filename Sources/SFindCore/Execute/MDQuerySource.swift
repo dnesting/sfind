@@ -1,4 +1,4 @@
-import CoreServices
+@preconcurrency import CoreServices
 import Darwin
 import Foundation
 
