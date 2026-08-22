@@ -2,7 +2,7 @@ import Foundation
 
 /// A parsed find expression. Evaluation is strict left-to-right with short-circuiting
 /// `and`/`or`, matching find(1).
-public indirect enum Expression: Equatable, Sendable {
+public indirect enum Expression: Hashable, Sendable {
     case and([Expression])
     case or([Expression])
     case not(Expression)
@@ -11,7 +11,7 @@ public indirect enum Expression: Equatable, Sendable {
 
 /// Comparison relation for `[-+]n` numeric arguments: `+n` more than, `-n` less than,
 /// `n` exactly.
-public enum Relation: Equatable, Sendable {
+public enum Relation: Hashable, Sendable {
     case exactly
     case lessThan
     case moreThan
@@ -26,7 +26,7 @@ public enum Relation: Equatable, Sendable {
 }
 
 /// A `[-+]n` argument.
-public struct NumericArg: Equatable, Sendable {
+public struct NumericArg: Hashable, Sendable {
     public var relation: Relation
     public var value: Int64
 
@@ -48,14 +48,14 @@ public enum TimeField: Character, Equatable, Sendable {
 /// `minutes` compares `ceil(age/60)` (both measured against /usr/bin/find at the
 /// boundaries; the man page's "rounded up" wording is wrong for days). `seconds`
 /// (from `smhdw` unit suffixes) compares raw seconds with no rounding.
-public enum TimeAmount: Equatable, Sendable {
+public enum TimeAmount: Hashable, Sendable {
     case days(Int64)
     case minutes(Int64)
     case seconds(Int64)
 }
 
 /// Argument to -atime/-mtime/-ctime/-Btime and the -amin family.
-public struct TimeArg: Equatable, Sendable {
+public struct TimeArg: Hashable, Sendable {
     public var relation: Relation
     public var amount: TimeAmount
 
@@ -67,7 +67,7 @@ public struct TimeArg: Equatable, Sendable {
 
 /// The reference operand of a -newerXY comparison: another file's timestamp, or
 /// (for Y=t) a literal date string parsed lazily.
-public enum NewerReference: Equatable, Sendable {
+public enum NewerReference: Hashable, Sendable {
     case file(path: String, field: TimeField)
     case date(String)
 }
@@ -75,12 +75,12 @@ public enum NewerReference: Equatable, Sendable {
 /// Unit for -size arguments. `blocks` is the no-suffix form (st_size rounded UP to
 /// 512-byte blocks, then compared); `bytes` compares exact bytes n × multiplier with
 /// no rounding (verified macOS behavior; differs from GNU).
-public enum SizeUnit: Equatable, Sendable {
+public enum SizeUnit: Hashable, Sendable {
     case blocks
     case bytes(multiplier: Int64)
 }
 
-public struct SizeArg: Equatable, Sendable {
+public struct SizeArg: Hashable, Sendable {
     public var relation: Relation
     public var value: Int64
     public var unit: SizeUnit
@@ -94,13 +94,13 @@ public struct SizeArg: Equatable, Sendable {
 
 /// -perm matching mode: bare = exact 07777 match, `-mode` = all listed bits,
 /// `+mode` (BSD) / `/mode` (GNU spelling) = any listed bit.
-public enum PermMatch: Equatable, Sendable {
+public enum PermMatch: Hashable, Sendable {
     case exact
     case allBits
     case anyBits
 }
 
-public struct PermArg: Equatable, Sendable {
+public struct PermArg: Hashable, Sendable {
     public var match: PermMatch
     /// Mode bits resolved at parse time (octal literal, or symbolic via setmode(3)
     /// applied to a zero base, matching find's umask-disregarding documentation).
@@ -116,7 +116,7 @@ public struct PermArg: Equatable, Sendable {
 }
 
 /// -flags argument: `chflags(1)` names resolved to bit masks via strtofflags(3).
-public struct FlagsArg: Equatable, Sendable {
+public struct FlagsArg: Hashable, Sendable {
     public var match: PermMatch
     public var flags: UInt32
     public var notflags: UInt32
@@ -143,7 +143,7 @@ public enum FileType: Character, Equatable, Sendable {
 }
 
 /// An -exec/-execdir/-ok/-okdir invocation.
-public struct ExecSpec: Equatable, Sendable {
+public struct ExecSpec: Hashable, Sendable {
     /// Utility name and arguments; `{}` is substituted at run time (anywhere within a
     /// token, matching macOS find).
     public var argv: [String]
@@ -173,7 +173,7 @@ public enum RegexDialect: String, Equatable, Sendable {
 /// `ParsedCommand.globals` at parse time and evaluate as `true` in expression position;
 /// they apply to the whole invocation regardless of expression reachability, and the
 /// last occurrence of a valued one wins (verified find behavior).
-public enum GlobalPrimary: Equatable, Sendable {
+public enum GlobalPrimary: Hashable, Sendable {
     case maxDepth(Int)
     case minDepth(Int)
     case xdev
@@ -187,7 +187,7 @@ public enum GlobalPrimary: Equatable, Sendable {
 }
 
 /// A find primary (predicate, action, or hoisted global).
-public enum Primary: Equatable, Sendable {
+public enum Primary: Hashable, Sendable {
     // Name and path.
     case name(String, caseInsensitive: Bool)
     case path(String, caseInsensitive: Bool)
