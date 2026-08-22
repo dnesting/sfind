@@ -1,0 +1,11 @@
+.build/
+release/
+*.xcodeproj
+.DS_Store
+
+# SwiftPM/Xcode: keep shared schemes, ignore per-user state
+.swiftpm/*
+!.swiftpm/xcode/
+.swiftpm/xcode/*
+!.swiftpm/xcode/xcshareddata/
+xcuserdata/

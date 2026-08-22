@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+
+jobs:
+  lint:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: swift format lint
+        run: swift format lint --strict --recursive Sources Tests Package.swift
+
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Cache SwiftPM dependency clones
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: ${{ runner.os }}-spm-
+      - name: Build and run unit + parity tests
+        # Coverage stays in debug: enabling it in release is broken (swiftlang/swift-package-manager#9197).
+        run: swift test --enable-code-coverage
+
+      # Spotlight indexing is enabled on GitHub-hosted macOS runners, but GitHub has tried to
+      # disable it three times (2020, 2023, 2025 — reverted each time). Probe at runtime so a
+      # future change skips the integration suite instead of breaking CI.
+      - name: Probe Spotlight availability
+        id: spotlight
+        run: |
+          mdutil -s / || true
+          probe="$HOME/sfind-ci-probe"
+          mkdir -p "$probe"
+          echo canary > "$probe/sfind-canary.txt"
+          mdimport "$probe" || true
+          available=false
+          for _ in $(seq 1 30); do
+            if mdfind -onlyin "$probe" 'kMDItemFSName == "sfind-canary.txt"' | grep -q .; then
+              available=true
+              break
+            fi
+            sleep 2
+          done
+          rm -rf "$probe"
+          echo "available=$available" >> "$GITHUB_OUTPUT"
+          echo "Spotlight available: $available"
+      - name: Run Spotlight integration tests
+        if: steps.spotlight.outputs.available == 'true'
+        run: SFIND_INTEGRATION=1 swift test --filter IntegrationTests
+      - name: Integration tests skipped
+        if: steps.spotlight.outputs.available != 'true'
+        run: echo "::warning::Spotlight unavailable on this runner; integration tests skipped"
+
+  release-build:
+    # Proves the universal release build works on every push/PR, so tag time holds no surprises.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build universal binary
+        run: ./scripts/build-universal.sh

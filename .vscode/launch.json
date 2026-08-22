@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "name": "Debug sfind",
+      "program": "${workspaceFolder}/.build/debug/sfind",
+      "args": [".", "-name", "*.md"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "swift-build"
+    }
+  ]
+}

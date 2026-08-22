@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      TAG: ${{ github.ref_name }}
+      # Secrets cannot appear in `if:` directly; hoist presence to env (string 'true'/'false').
+      # Signing + notarization turn on by adding these repo secrets — no workflow edits:
+      #   MACOS_CERT_P12 (base64 .p12), MACOS_CERT_PASSWORD, MACOS_SIGN_IDENTITY,
+      #   APPSTORE_API_KEY_P8, APPSTORE_API_KEY_ID, APPSTORE_API_ISSUER_ID
+      HAS_SIGNING: ${{ secrets.MACOS_CERT_P12 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build universal binary
+        run: ./scripts/build-universal.sh
+
+      # Signing must happen after lipo: lipo strips signatures.
+      - name: Ad-hoc sign
+        if: env.HAS_SIGNING != 'true'
+        run: |
+          codesign --force -s - release/sfind
+          codesign --verify --verbose=2 release/sfind
+
+      - name: Import Developer ID certificate
+        if: env.HAS_SIGNING == 'true'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERT_P12 }}
+          p12-password: ${{ secrets.MACOS_CERT_PASSWORD }}
+
+      - name: Sign with Developer ID
+        if: env.HAS_SIGNING == 'true'
+        run: |
+          codesign --force --timestamp --options runtime \
+            --sign "${{ secrets.MACOS_SIGN_IDENTITY }}" release/sfind
+          codesign --verify --verbose=2 release/sfind
+
+      - name: Notarize
+        if: env.HAS_SIGNING == 'true'
+        # Bare CLI binaries cannot be stapled; the notarization ticket is served online.
+        run: |
+          KEY_FILE="$RUNNER_TEMP/apikey.p8"
+          printf '%s' "${{ secrets.APPSTORE_API_KEY_P8 }}" > "$KEY_FILE"
+          ditto -c -k --keepParent release/sfind "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --key "$KEY_FILE" \
+            --key-id "${{ secrets.APPSTORE_API_KEY_ID }}" \
+            --issuer "${{ secrets.APPSTORE_API_ISSUER_ID }}" \
+            --wait
+          rm -f "$KEY_FILE"
+          spctl -a -vvv -t install release/sfind || true
+
+      - name: Package
+        run: |
+          cp LICENSE README.md release/
+          tar -C release -czf "sfind-$TAG-universal-apple-macosx.tar.gz" sfind LICENSE README.md
+          shasum -a 256 sfind-*.tar.gz > SHA256SUMS
+
+      - name: Create release and upload artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$TAG" --title "$TAG" --generate-notes || true
+          gh release upload "$TAG" sfind-*.tar.gz SHA256SUMS --clobber
