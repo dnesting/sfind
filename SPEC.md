@@ -45,13 +45,29 @@ argument ends option parsing.
 `find` never uses double-dash options, so `--*` is sfind's conflict-free namespace.
 
 - [ ] `--expr STRING` — supply expression tokens as a single string instead of discrete
-  arguments, e.g. `sfind ~/Documents --expr '-name "*.md" -mtime -7'`. The string is split
-  into tokens with sh-style rules (whitespace separates tokens; single quotes, double quotes,
-  and backslashes group/escape; no variable expansion, globbing, or command substitution),
-  and the tokens are spliced into the expression at the position where `--expr` appears.
-  Repeatable, and freely mixable with discrete expression arguments. Parser-level feature:
-  after tokenization the result is indistinguishable from discrete arguments (same AST, same
-  MDQuery translation, same post-filter).
+  arguments. The motivating property is that expression metacharacters need **no shell
+  escaping** inside the (shell-quoted) string — parentheses and `!` are ordinary characters
+  to your shell and token delimiters to sfind:
+
+  ```sh
+  sfind ~/Documents --expr '(-name "*.md" -o -name "*.txt") -mtime -7'
+  ```
+
+  Tokenization rules (deliberately NOT full sh syntax — no operators, expansion, globbing,
+  or substitution):
+  - Whitespace separates tokens.
+  - Single quotes, double quotes, and backslashes group/escape, so patterns keep their
+    glob characters: `-name "*.md"`.
+  - Unquoted `(` and `)` are self-delimiting tokens — no surrounding spaces required
+    (`(-name` splits into `(`, `-name`).
+  - Unquoted `!` is self-delimiting only where a new token would start, so negated fnmatch
+    classes like `-name "[!a]*"` survive intact even unquoted mid-token.
+  - Inside quotes, all of the above are literal (`-name "(odd) file*"` works).
+
+  The resulting tokens are spliced into the expression at the position where `--expr`
+  appears. Repeatable, and freely mixable with discrete expression arguments. Parser-level
+  feature: after tokenization the result is indistinguishable from discrete arguments (same
+  AST, same MDQuery translation, same post-filter).
 
 ## Primaries — time
 

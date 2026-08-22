@@ -250,9 +250,11 @@ via mdfind is load-bearing for their customers). Still gate on a runtime canary.
    SPEC.md with the full unchecked checklist + determinations, README expansion.
 2. **Parser**: options + expression AST with all primaries/operators; per-option parser tests
    (argument shapes, the `-newerXY` matrix, `-exec` terminator rules, error cases). Includes
-   `--expr STRING` (sfind extension): sh-style tokenization (quotes/escapes, no expansion) of
-   a single string into expression tokens, spliced at the flag's position; repeatable and
-   mixable with discrete tokens.
+   `--expr STRING` (sfind extension): tokenizes one string into expression tokens so that
+   parens and `!` need no shell escaping — whitespace splits; quotes/backslashes group;
+   unquoted `(`/`)` self-delimit; unquoted `!` self-delimits only at token start (preserving
+   `[!a]*` classes); spliced at the flag's position; repeatable and mixable with discrete
+   tokens. See SPEC.md for the full rules.
 3. **Planner**: MDQuery translation + warnings; per-option planner tests asserting exact
    query strings and post-filter plans (check off SPEC.md entries as they land).
 4. **Post-filter + print actions**: FileInfo/lstat, fnmatch, POSIX regex, globals,
