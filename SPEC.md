@@ -71,10 +71,11 @@ argument ends option parsing.
 
 ## Primaries — time
 
-Numeric arguments accept `+n` / `-n` / `n` (more than / less than / exactly). No-unit values
-compare `ceil((now − t)/86400)` days (`ceil(../60)` minutes for the `*min` forms); unit
-suffixes `s m h d w` (combinable, e.g. `-1h30m`) compare raw seconds with no rounding. `now`
-is fixed at startup.
+Numeric arguments accept `+n` / `-n` / `n` (more than / less than / exactly). No-unit day
+values compare `floor(age/86400)`; the `*min` forms compare `ceil(age/60)` (both measured
+empirically at the boundaries — the man page says "rounded up" for both, which is wrong for
+days). Unit suffixes `s m h d w` (combinable, e.g. `-1h30m`) compare raw seconds with no
+rounding. `now` is fixed at startup.
 
 - [ ] `-mtime [-+]n[smhdw]` — modification time.
   Index: range on `kMDItemFSContentChangeDate` via `$time.now(-secs)`, widened to the

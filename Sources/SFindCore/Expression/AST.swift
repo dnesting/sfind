@@ -44,9 +44,10 @@ public enum TimeField: Character, Equatable, Sendable {
     case modify = "m"
 }
 
-/// The unit interpretation of a time argument. `days`/`minutes` use find's
-/// ceil-rounding rule; `seconds` (from `smhdw` unit suffixes) compares raw seconds
-/// with no rounding.
+/// The unit interpretation of a time argument. `days` compares `floor(age/86400)`,
+/// `minutes` compares `ceil(age/60)` (both measured against /usr/bin/find at the
+/// boundaries; the man page's "rounded up" wording is wrong for days). `seconds`
+/// (from `smhdw` unit suffixes) compares raw seconds with no rounding.
 public enum TimeAmount: Equatable, Sendable {
     case days(Int64)
     case minutes(Int64)

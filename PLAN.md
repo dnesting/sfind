@@ -130,8 +130,9 @@ directory→`kMDItemContentTypeTree == "public.folder"`.
 - `-size` no-suffix: `st_size` rounded UP to 512-byte blocks, then compared. With
   `c/k/M/G/T/P`: exact bytes `n × scale`, NO rounding (differs from GNU). A 27034-byte file
   matches `-size 53` and `-size +26k`, NOT `-size 27k`.
-- Times, no unit: `ceil((now − t)/86400)`; `-mtime -1` ≡ `-mtime 0`; `now` is fixed at
-  startup. Unit suffixes (`smhdw`, combinable, e.g. `-1h30m`): raw seconds, no rounding.
+- Times, no unit: days compare `floor(age/86400)` but minutes compare `ceil(age/60)`
+  (measured empirically at the boundaries; the man page's "rounded up" wording is wrong
+  for days). `-mtime -1` ≡ `-mtime 0`; `now` is fixed at startup. Unit suffixes (`smhdw`, combinable, e.g. `-1h30m`): raw seconds, no rounding.
   `-newerXY`: all 20 forms exist; `Y=t` accepts getdate-style strings, NOT `@epoch`.
 - Implicit `-print` is suppressed by the lexical presence of
   `-print/-print0/-ls/-exec/-execdir/-ok/-okdir` **and `-delete`** (undocumented), NOT by
