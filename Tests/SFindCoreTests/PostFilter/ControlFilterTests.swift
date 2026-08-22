@@ -90,6 +90,35 @@ import Testing
         #expect(lines == [tree.root + "/a", tree.root + "/b", tree.root + "/c"])
     }
 
+    @Test func xdevFiltersOtherDevices() throws {
+        let tree = try TempTree()
+        try tree.file("here")
+        var candidates = tree.candidates()
+        // Fabricate a candidate from another device: /dev/null lives on devfs.
+        let rootDevice = FileInfo.lstat(tree.root)!.device
+        candidates = candidates.map {
+            Candidate(path: $0.path, depth: $0.depth, rootDevice: rootDevice)
+        }
+        candidates.append(Candidate(path: "/dev/null", depth: 1, rootDevice: rootDevice))
+        let (with, _, _, _) = try Filter.run(
+            ["-xdev", "-name", "null"], root: tree.root, candidates: candidates)
+        #expect(with.isEmpty)
+        let (without, _, _, _) = try Filter.run(
+            ["-name", "null"], root: tree.root, candidates: candidates)
+        #expect(without == ["/dev/null"])
+    }
+
+    @Test func followActsAsL() throws {
+        let tree = try TempTree()
+        try tree.dir("realdir")
+        try tree.symlink("dirlink", to: "realdir")
+        // -follow (deprecated primary) enables -L semantics globally.
+        #expect(try Filter.relativeMatches(["-follow", "-type", "l"], in: tree) == [])
+        #expect(
+            try Filter.relativeMatches(["-type", "d", "-follow"], in: tree)
+                == [".", "dirlink", "realdir"])
+    }
+
     @Test func operatorShortCircuitControlsActions() throws {
         let tree = try TempTree()
         try tree.file("x")
@@ -105,13 +134,4 @@ import Testing
         #expect(lines2 == [tree.root + "/x"])
     }
 
-    @Test func notImplementedActionsAreRejected() throws {
-        let tree = try TempTree()
-        for tokens in [["-ls"], ["-exec", "true", ";"], ["-delete"], ["-printf", "%p"]] {
-            let (_, _, status, diagnostics) = try Filter.run(
-                tokens, root: tree.root, candidates: tree.candidates())
-            #expect(status == 1, "\(tokens)")
-            #expect(diagnostics.first?.contains("not implemented yet") == true, "\(tokens)")
-        }
-    }
 }

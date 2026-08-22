@@ -33,6 +33,8 @@ public struct Globals: Equatable, Sendable {
     public var depthFirst = false
     /// -ignore_readdir_race: silently drop candidates that vanish before stat.
     public var ignoreReaddirRace = false
+    /// -follow: deprecated primary form of -L (merged into options.symlinks after parse).
+    public var follow = false
     /// -daystart (GNU extension): day boundaries measured from the start of today.
     public var daystart = false
     /// -regextype (GNU extension): overrides the -E/BRE default for -regex/-iregex.

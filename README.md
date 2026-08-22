@@ -5,10 +5,14 @@ walk. On indexed trees, queries that would walk millions of inodes return in mil
 
 ## Status
 
-Scaffolding. Nothing usable yet.
+Early but functional: every option, primary, and operator in [SPEC.md](SPEC.md) is
+implemented with per-option tests, a `/usr/bin/find` parity suite (~80 expressions
+compared byte-for-byte), and live-index integration tests. Not yet battle-tested;
+expect rough edges. No releases yet.
 
-See [SPEC.md](SPEC.md) for the list of `find` options and how each maps onto the Spotlight
-query vs. post-filtering, and [PLAN.md](PLAN.md) for the implementation plan.
+See [SPEC.md](SPEC.md) for how each `find` feature maps onto the Spotlight query vs.
+post-filtering (and the known divergences of an index-backed design), and
+[PLAN.md](PLAN.md) for the implementation plan.
 
 ## Design in one paragraph
 

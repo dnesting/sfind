@@ -69,7 +69,8 @@ final class TempTree {
 /// Runs an expression through the parser → evaluator over the given candidates.
 enum Filter {
     static func run(
-        _ tokens: [String], root: String, candidates: [Candidate], now: Date = Date()
+        _ tokens: [String], root: String, candidates: [Candidate], now: Date = Date(),
+        promptResponder: ((String) -> Bool)? = nil
     ) throws -> (lines: [String], text: String, status: Int32, diagnostics: [String]) {
         // Leading option bundles (-L, -E, -s, …) must precede the path operand.
         let optionCount = tokens.prefix { token in
@@ -81,7 +82,8 @@ enum Filter {
         let command = try CommandParser().parse(arguments)
         let sink = CollectingSink()
         let runner = Runner(
-            command: command, environment: .live(now: now), sink: sink)
+            command: command, environment: .live(now: now), sink: sink,
+            promptResponder: promptResponder)
         let status = runner.run(source: ArraySource(candidates))
         return (sink.lines, sink.text, status, sink.diagnostics)
     }

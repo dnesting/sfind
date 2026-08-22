@@ -83,6 +83,15 @@ import Testing
         // Implicit-print suppression parity.
         ["-name", "*.md", "-print"],
         ["-name", "*.md", "-print", "-print"],
+        // -ls (byte-identical format) and -prune.
+        ["-name", "*.md", "-ls"],
+        ["-type", "d", "-ls"],
+        ["-name", "src", "-prune", "-o", "-print"],
+        ["-name", "src", "-prune", "-print", "-o", "-print"],
+        ["-type", "d", "-name", "deep", "-prune", "-o", "-name", "*.bin", "-print"],
+        ["-path", "*/nested*", "-prune", "-o", "-type", "f", "-print"],
+        // -exec as a predicate (no child stdout involved).
+        ["-type", "f", "-exec", "test", "-r", "{}", ";", "-name", "*.md"],
     ]
 
     @Test(arguments: expressions.indices)

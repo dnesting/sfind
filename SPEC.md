@@ -31,11 +31,11 @@ Checkbox legend: `[ ]` planned, `[x]` implemented with per-option tests.
 - [x] `-E` — `-regex`/`-iregex` patterns are extended REs (ERE) instead of BRE.
 - [x] `-X` — skip filenames containing `' " \ space tab newline`, diagnostic to stderr.
   Output-time filter.
-- [ ] `-d` — depth-first (post-order). Affects output/action ordering; makes `-prune` inert.
+- [x] `-d` — depth-first (post-order). Affects output/action ordering; makes `-prune` inert.
 - [x] `-f path` — add `path` to the roots (allows roots beginning with `!`, `(`, `-`).
 - [x] `-s` — lexicographic result order. sfind: sort the final result set (this is also the
   recommended flag for deterministic output, since Spotlight's natural order is unspecified).
-- [ ] `-x` — do not cross device boundaries. Post: compare `st_dev` against the root's.
+- [x] `-x` — do not cross device boundaries. Post: compare `st_dev` against the root's.
 
 Option parsing is getopt-style: options may bundle (`-EXdsx`), and the first non-option
 argument ends option parsing.
@@ -167,7 +167,7 @@ rounding. `now` is fixed at startup.
   `st_blocks * 512 < st_size`.
 - [x] `-flags [-+]flags,notflags` — `chflags(1)` file flags. Index: none. Post: `lstat`
   `st_flags`. macOS/BSD-only.
-- [ ] `-acl` — file has an extended ACL. Index: none. Post: `acl_get_file`. macOS-only.
+- [x] `-acl` — file has an extended ACL. Index: none. Post: `acl_get_file`. macOS-only.
 - [x] `-xattr` — file has any extended attribute. Index: none. Post: `listxattr`. macOS-only.
 - [x] `-xattrname name` — file has the named xattr. Index: none. Post: `listxattr`.
   macOS-only.
@@ -180,21 +180,21 @@ All actions run in the post stage, after filtering.
 
 - [x] `-print` — path + newline. Always true.
 - [x] `-print0` — path + NUL (no newline; verified byte-exact).
-- [ ] `-ls` — `ls -dgils`-format line (inode, 512-byte `st_blocks`, mode, nlink, owner,
+- [x] `-ls` — `ls -dgils`-format line (inode, 512-byte `st_blocks`, mode, nlink, owner,
   group, size, mtime, path; `-> target` for symlinks; device numbers for b/c files). Always
   true. Note: prints allocated `st_blocks`, which differs from `-size`'s rounded-up
   computation on APFS.
-- [ ] `-exec utility [args] ;` — one invocation per file, `{}` replaced anywhere in any arg
+- [x] `-exec utility [args] ;` — one invocation per file, `{}` replaced anywhere in any arg
   (including mid-string). True iff exit status 0.
-- [ ] `-exec utility [args] {} +` — xargs-style batching; `{}` must be the literal last
+- [x] `-exec utility [args] {} +` — xargs-style batching; `{}` must be the literal last
   argument before `+`. Always true; any nonzero child makes sfind's overall exit status
   nonzero.
-- [ ] `-execdir …` (`;` and `+` forms) — as `-exec` but runs from the file's directory with
+- [x] `-execdir …` (`;` and `+` forms) — as `-exec` but runs from the file's directory with
   the unqualified filename.
-- [ ] `-ok utility [args] ;` — `-exec` with a terminal prompt; non-affirmative → not run,
+- [x] `-ok utility [args] ;` — `-exec` with a terminal prompt; non-affirmative → not run,
   primary is false.
-- [ ] `-okdir utility [args] ;` — `-execdir` with the prompt.
-- [ ] `-delete` — delete the file/directory. Always true. Forces children-before-parents
+- [x] `-okdir utility [args] ;` — `-execdir` with the prompt.
+- [x] `-delete` — delete the file/directory. Always true. Forces children-before-parents
   ordering (sfind sorts matches by depth descending); refuses paths that would traverse `/`;
   incompatible with symlink following; fails on non-empty directories. Suppresses the
   implicit `-print` (undocumented macOS behavior, verified).
@@ -214,15 +214,15 @@ expression branches that are never evaluated, and the last occurrence wins (veri
 - [x] `-maxdepth n` — at most n levels below the roots. Post: component-count check relative
   to the root.
 - [x] `-mindepth n` — at least n levels. Post: component-count check.
-- [ ] `-depth` — post-order (act on contents before the directory). Ordering directive, same
+- [x] `-depth` — post-order (act on contents before the directory). Ordering directive, same
   as `-d`.
 - [x] `-depth n` — true if depth relative to the root is n (BSD primary, distinct from bare
   `-depth`; disambiguated by a numeric next token). Post: component count.
-- [ ] `-prune` — do not descend below the current file; no effect under `-d`.
+- [x] `-prune` — do not descend below the current file; no effect under `-d`.
   Post-processing: evaluate the prune condition on candidate directories, then exclude
   candidates with a pruned ancestor.
-- [ ] `-xdev` — deprecated primary form of `-x`. `-mount` — GNU-compat alias.
-- [ ] `-follow` — deprecated primary form of `-L`.
+- [x] `-xdev` — deprecated primary form of `-x`. `-mount` — GNU-compat alias.
+- [x] `-follow` — deprecated primary form of `-L`.
 - [x] `-ignore_readdir_race` / `-noignore_readdir_race` — suppress errors for files deleted
   mid-run. Relevant to sfind: index results can be stale; with the flag set, `ENOENT` on a
   candidate is silently dropped; without it, it is a diagnostic + exit 1 (find behavior).
@@ -245,7 +245,7 @@ OR-ed; an untranslatable branch makes that branch match-all.
 ## GNU extensions adopted
 
 - [x] `-perm /mode` — any-bit form (see `-perm` above).
-- [ ] `-printf format` — GNU directive set (`%p %f %h %P %H %l %s %b %k %S %y %Y %m %M %n %i
+- [x] `-printf format` — GNU directive set (`%p %f %h %P %H %l %s %b %k %S %y %Y %m %M %n %i
   %d %D %F %u %U %g %G`, time forms `%a %c %t %B` + `%A<k> %C<k> %T<k> %B<k>` + `@` epoch,
   escapes `\n \t \0 \\ \NNN` and `\c`). Post: formatted from `lstat` + path data. macOS find
   has no `-printf`, so no conflict.

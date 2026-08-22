@@ -102,6 +102,10 @@ public struct CommandParser {
         var parser = ExpressionParser(tokens: tokens, globals: globals)
         let expression = try parser.parseAll()
         globals = parser.globals
+        if globals.follow {
+            // -follow is the deprecated global-primary form of -L.
+            options.symlinks = .always
+        }
 
         return ParsedCommand(
             options: options,
@@ -351,6 +355,7 @@ struct ExpressionParser {
             globals.depthFirst = true
             return .global(.depthFirst)
         case "-follow":
+            globals.follow = true
             return .global(.follow)
         case "-ignore_readdir_race":
             globals.ignoreReaddirRace = true

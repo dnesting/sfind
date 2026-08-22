@@ -119,6 +119,19 @@ import Testing
         #expect(try files(["-executable"]) == ["exec"])
     }
 
+    @Test func aclPredicate() throws {
+        let tree = try TempTree()
+        let path = try tree.file("guarded")
+        try tree.file("plain")
+        let chmod = Process()
+        chmod.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        chmod.arguments = ["+a", "user:\(NSUserName()) allow read", path]
+        try chmod.run()
+        chmod.waitUntilExit()
+        try #require(chmod.terminationStatus == 0)
+        #expect(try Filter.relativeMatches(["-type", "f", "-acl"], in: tree) == ["guarded"])
+    }
+
     @Test func xattrPredicates() throws {
         let tree = try TempTree()
         let path = try tree.file("tagged")

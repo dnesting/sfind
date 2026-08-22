@@ -19,14 +19,21 @@ public final class Evaluator {
     private var resolvedSamefiles: [String: (dev: Int32, ino: UInt64)] = [:]
     private var userTableHits: [UInt32: Bool] = [:]
     private var groupTableHits: [UInt32: Bool] = [:]
+    private var execStates: [Primary: ExecState] = [:]
+    private var printfWarned: Set<String> = []
+    private let promptResponder: ((String) -> Bool)?
 
     /// Set when any candidate failed to stat (or another non-fatal error occurred);
     /// find's exit status is 1 in that case.
     public private(set) var sawError = false
 
-    public init(command: ParsedCommand, environment: PlannerEnvironment, sink: OutputSink) throws {
+    public init(
+        command: ParsedCommand, environment: PlannerEnvironment, sink: OutputSink,
+        promptResponder: ((String) -> Bool)? = nil
+    ) throws {
         self.command = command
         self.sink = sink
+        self.promptResponder = promptResponder
         self.nowSeconds = Int64(environment.now.timeIntervalSince1970)
         if command.globals.daystart {
             let start = Calendar.current.startOfDay(for: environment.now)
@@ -68,8 +75,13 @@ public final class Evaluator {
                     pattern: pattern,
                     extended: extendedRegexSelected,
                     caseInsensitive: caseInsensitive)
-            case .ls, .exec, .delete, .printf:
-                throw ParseError("\(primaryName(primary)): not implemented yet")
+            case .exec(let spec):
+                execStates[primary] = ExecState(
+                    spec: spec, sink: sink, promptResponder: promptResponder)
+            case .delete:
+                if command.options.symlinks != .never {
+                    throw ParseError("-delete: forbidden when symlinks are followed")
+                }
             default:
                 break
             }
@@ -83,27 +95,22 @@ public final class Evaluator {
         return command.options.extendedRegex
     }
 
-    private func primaryName(_ primary: Primary) -> String {
-        switch primary {
-        case .ls: return "-ls"
-        case .delete: return "-delete"
-        case .printf: return "-printf"
-        case .exec(let spec):
-            if spec.prompted { return spec.fromFileDirectory ? "-okdir" : "-ok" }
-            return spec.fromFileDirectory ? "-execdir" : "-exec"
-        default: return "?"
-        }
-    }
-
     // MARK: - Per-candidate evaluation
 
+    public struct Outcome {
+        public var matched: Bool
+        public var pruned: Bool
+        public var isDirectory: Bool
+    }
+
     /// Evaluates the effective expression for one candidate, running actions as they
-    /// are reached. Returns whether the expression matched; throws QuitSignal on -quit.
+    /// are reached. Throws QuitSignal on -quit.
     @discardableResult
-    public func process(_ candidate: Candidate) throws -> Bool {
+    public func process(_ candidate: Candidate) throws -> Outcome {
+        let skipped = Outcome(matched: false, pruned: false, isDirectory: false)
         // Depth globals apply before the expression.
-        if let maxDepth = command.globals.maxDepth, candidate.depth > maxDepth { return false }
-        if let minDepth = command.globals.minDepth, candidate.depth < minDepth { return false }
+        if let maxDepth = command.globals.maxDepth, candidate.depth > maxDepth { return skipped }
+        if let minDepth = command.globals.minDepth, candidate.depth < minDepth { return skipped }
 
         var context = Context(candidate: candidate)
         guard statInfo(&context) != nil else {
@@ -111,19 +118,33 @@ public final class Evaluator {
                 sink.diagnostic("\(candidate.path): No such file or directory")
                 sawError = true
             }
-            return false
+            return skipped
         }
         if command.globals.sameDevice, let rootDevice = candidate.rootDevice,
             let info = statInfo(&context), info.device != rootDevice
         {
-            return false
+            return skipped
         }
-        return try evaluate(command.effectiveExpression, &context)
+        let matched = try evaluate(command.effectiveExpression, &context)
+        return Outcome(
+            matched: matched, pruned: context.pruneFired,
+            isDirectory: statInfo(&context)?.isDirectory ?? false)
+    }
+
+    /// Flushes pending -exec … {} + batches; a nonzero child poisons the exit status.
+    public func finish() {
+        var errored = false
+        for state in execStates.values {
+            state.flush(sawError: &errored)
+            if state.batchFailed { errored = true }
+        }
+        if errored { sawError = true }
     }
 
     struct Context {
         var candidate: Candidate
         var info: FileInfo??  // nil = not fetched; .some(nil) = stat failed
+        var pruneFired = false
     }
 
     private func statInfo(_ context: inout Context) -> FileInfo? {
@@ -307,7 +328,11 @@ public final class Evaluator {
         case .depth(let arg):
             return arg.relation.compare(Int64(context.candidate.depth), to: arg.value)
 
-        case .alwaysTrue, .prune, .global:
+        case .prune:
+            context.pruneFired = true
+            return true
+
+        case .alwaysTrue, .global:
             return true
         case .alwaysFalse:
             return false
@@ -321,8 +346,61 @@ public final class Evaluator {
         case .quit:
             throw QuitSignal()
 
-        case .ls, .exec, .delete, .printf:
-            return false  // rejected in prepare(); unreachable
+        case .ls:
+            guard let info = statInfo(&context) else { return false }
+            let target = info.isSymlink ? readLink(context.candidate.path) : nil
+            sink.write(
+                LsFormat.line(
+                    path: context.candidate.path, info: info, target: target,
+                    nowSeconds: nowSeconds) + "\n")
+            return true
+
+        case .printf(let format):
+            guard let info = statInfo(&context) else { return false }
+            var fs = statfs()
+            let fstype: String
+            if statfs(context.candidate.path, &fs) == 0 {
+                fstype = withUnsafeBytes(of: &fs.f_fstypename) { buffer in
+                    String(cString: buffer.bindMemory(to: CChar.self).baseAddress!)
+                }
+            } else {
+                fstype = "unknown"
+            }
+            let input = PrintfFormat.Input(
+                path: context.candidate.path, depth: context.candidate.depth, info: info,
+                linkTarget: info.isSymlink ? readLink(context.candidate.path) : nil,
+                fstype: fstype)
+            let (bytes, _) = PrintfFormat.render(format, input: input) { message in
+                if printfWarned.insert(message).inserted {
+                    sink.diagnostic("-printf: \(message)")
+                }
+            }
+            sink.write(bytes)
+            return true
+
+        case .exec:
+            guard let state = execStates[primary] else { return false }
+            var errored = false
+            let result = state.run(path: context.candidate.path, sawError: &errored)
+            if errored { sawError = true }
+            return result
+
+        case .delete:
+            guard let info = statInfo(&context) else { return false }
+            let path = context.candidate.path
+            let last = context.candidate.lastComponent
+            if path == "/" || last == "." || last == ".." {
+                sink.diagnostic("-delete: \(path): refusing to delete")
+                sawError = true
+                return false
+            }
+            let ok = info.isDirectory ? rmdir(path) == 0 : unlink(path) == 0
+            if !ok {
+                sink.diagnostic("-delete: \(path): \(String(cString: strerror(errno)))")
+                sawError = true
+                return false
+            }
+            return true
         }
     }
 
