@@ -15,7 +15,7 @@ test:
 # Runs the Spotlight-backed integration suite. Fixtures are created (and removed) under
 # $$HOME because /tmp and $$TMPDIR are not usefully indexed.
 integration-test:
-	SFIND_INTEGRATION=1 $(SWIFT) test --filter IntegrationTests
+	SFIND_INTEGRATION=1 $(SWIFT) test --no-parallel --filter IntegrationTests
 
 lint:
 	$(SWIFT) format lint --strict --recursive Sources Tests Package.swift

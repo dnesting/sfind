@@ -8,7 +8,9 @@ import Testing
 /// Fixtures MUST live in a non-hidden directory directly under $HOME: /tmp and $TMPDIR are
 /// unindexed or reduced-tier. Force-index with mdimport and poll with a timeout — never a
 /// fixed sleep — and never assert exact global counts against a live index.
-@Suite(.enabled(if: ProcessInfo.processInfo.environment["SFIND_INTEGRATION"] == "1"))
+@Suite(
+    .enabled(if: ProcessInfo.processInfo.environment["SFIND_INTEGRATION"] == "1"),
+    .serialized)
 struct SpotlightCanaryTests {
     @Test func spotlightIndexesAHomeFixture() throws {
         let dir = FileManager.default.homeDirectoryForCurrentUser

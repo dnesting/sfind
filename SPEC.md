@@ -22,18 +22,18 @@ Checkbox legend: `[ ]` planned, `[x]` implemented with per-option tests.
 
 ## Command-line options
 
-- [ ] `-H` — follow symlinks for command-line path operands only.
+- [x] `-H` — follow symlinks for command-line path operands only.
   Index: none. Post: `stat` for roots (fallback `lstat` on dangling), `lstat` below.
-- [ ] `-L` — follow all symlinks (`stat`, `lstat` fallback for broken links).
+- [x] `-L` — follow all symlinks (`stat`, `lstat` fallback for broken links).
   Index: none; symlinks are absent from the index (warning). Post: stat-mode evaluation;
   `-type l` matches only broken links, matching find.
-- [ ] `-P` — never follow symlinks (default). Post: `lstat` everywhere.
-- [ ] `-E` — `-regex`/`-iregex` patterns are extended REs (ERE) instead of BRE.
-- [ ] `-X` — skip filenames containing `' " \ space tab newline`, diagnostic to stderr.
+- [x] `-P` — never follow symlinks (default). Post: `lstat` everywhere.
+- [x] `-E` — `-regex`/`-iregex` patterns are extended REs (ERE) instead of BRE.
+- [x] `-X` — skip filenames containing `' " \ space tab newline`, diagnostic to stderr.
   Output-time filter.
 - [ ] `-d` — depth-first (post-order). Affects output/action ordering; makes `-prune` inert.
-- [ ] `-f path` — add `path` to the roots (allows roots beginning with `!`, `(`, `-`).
-- [ ] `-s` — lexicographic result order. sfind: sort the final result set (this is also the
+- [x] `-f path` — add `path` to the roots (allows roots beginning with `!`, `(`, `-`).
+- [x] `-s` — lexicographic result order. sfind: sort the final result set (this is also the
   recommended flag for deterministic output, since Spotlight's natural order is unspecified).
 - [ ] `-x` — do not cross device boundaries. Post: compare `st_dev` against the root's.
 
@@ -44,7 +44,7 @@ argument ends option parsing.
 
 `find` never uses double-dash options, so `--*` is sfind's conflict-free namespace.
 
-- [ ] `--expr STRING` — supply expression tokens as a single string instead of discrete
+- [x] `--expr STRING` — supply expression tokens as a single string instead of discrete
   arguments. The motivating property is that expression metacharacters need **no shell
   escaping** inside the (shell-quoted) string — parentheses and `!` are ordinary characters
   to your shell and token delimiters to sfind:
@@ -77,28 +77,28 @@ empirically at the boundaries — the man page says "rounded up" for both, which
 days). Unit suffixes `s m h d w` (combinable, e.g. `-1h30m`) compare raw seconds with no
 rounding. `now` is fixed at startup.
 
-- [ ] `-mtime [-+]n[smhdw]` — modification time.
+- [x] `-mtime [-+]n[smhdw]` — modification time.
   Index: range on `kMDItemFSContentChangeDate` via `$time.now(-secs)`, widened to the
   rounding boundary. Post: `lstat` `st_mtimespec`.
-- [ ] `-mmin [-+]n` — as `-mtime`, minutes. Index: same attribute. Post: same.
-- [ ] `-atime [-+]n[smhdw]` — access time.
+- [x] `-mmin [-+]n` — as `-mtime`, minutes. Index: same attribute. Post: same.
+- [x] `-atime [-+]n[smhdw]` — access time.
   Index: **none** — `kMDItemLastUsedDate` is LaunchServices "last opened", not POSIX atime
   (verified). Post: `lstat` `st_atimespec`.
-- [ ] `-amin [-+]n` — as `-atime`, minutes. Index: none. Post: `lstat`.
-- [ ] `-ctime [-+]n[smhdw]` — inode change time. Index: **none** (no Spotlight attribute).
+- [x] `-amin [-+]n` — as `-atime`, minutes. Index: none. Post: `lstat`.
+- [x] `-ctime [-+]n[smhdw]` — inode change time. Index: **none** (no Spotlight attribute).
   Post: `lstat` `st_ctimespec`.
-- [ ] `-cmin [-+]n` — as `-ctime`, minutes. Index: none. Post: `lstat`.
-- [ ] `-Btime [-+]n[smhdw]` — birth time. Index: range on `kMDItemFSCreationDate`.
+- [x] `-cmin [-+]n` — as `-ctime`, minutes. Index: none. Post: `lstat`.
+- [x] `-Btime [-+]n[smhdw]` — birth time. Index: range on `kMDItemFSCreationDate`.
   Post: `lstat` `st_birthtimespec`. BSD-only (GNU has no `-Btime`).
-- [ ] `-Bmin [-+]n` — as `-Btime`, minutes. Index: `kMDItemFSCreationDate`. Post: `lstat`.
-- [ ] `-newer file` — mtime strictly newer than `file`'s mtime (≡ `-newermm`).
+- [x] `-Bmin [-+]n` — as `-Btime`, minutes. Index: `kMDItemFSCreationDate`. Post: `lstat`.
+- [x] `-newer file` — mtime strictly newer than `file`'s mtime (≡ `-newermm`).
   Index: `kMDItemFSContentChangeDate > $time.iso(...)` of the reference. Post: `lstat`.
-- [ ] `-mnewer file` — BSD alias of `-newer`.
-- [ ] `-anewer file` — atime newer than `file`'s mtime (≡ `-neweram`). Index: none. Post: `lstat`.
-- [ ] `-cnewer file` — ctime newer than `file`'s mtime (≡ `-newercm`). Index: none. Post: `lstat`.
-- [ ] `-Bnewer file` — birthtime newer than `file`'s mtime (≡ `-newerBm`). Index:
+- [x] `-mnewer file` — BSD alias of `-newer`.
+- [x] `-anewer file` — atime newer than `file`'s mtime (≡ `-neweram`). Index: none. Post: `lstat`.
+- [x] `-cnewer file` — ctime newer than `file`'s mtime (≡ `-newercm`). Index: none. Post: `lstat`.
+- [x] `-Bnewer file` — birthtime newer than `file`'s mtime (≡ `-newerBm`). Index:
   `kMDItemFSCreationDate`. Post: `lstat`. BSD-only.
-- [ ] `-newerXY file` — X ∈ {a,B,c,m} attribute of candidate, Y ∈ {a,B,c,m,t} attribute of
+- [x] `-newerXY file` — X ∈ {a,B,c,m} attribute of candidate, Y ∈ {a,B,c,m,t} attribute of
   `file` (`t`: `file` is a date string). All 20 forms.
   Index: narrowing only when X ∈ {m, B}; none for X ∈ {a, c}. Post: `lstat`.
   Dialect: `Y=t` accepts getdate-style strings (`yesterday`, `Jan 1 2020`, ISO); GNU's
@@ -106,22 +106,22 @@ rounding. `now` is fixed at startup.
 
 ## Primaries — name and path
 
-- [ ] `-name pattern` — `fnmatch` glob on the last path component. `-name '*'` matches
+- [x] `-name pattern` — `fnmatch` glob on the last path component. `-name '*'` matches
   dotfiles (no `FNM_PERIOD`).
   Index: `kMDItemFSName == "<pattern>"` when the pattern uses only `*` and literals; patterns
   containing `?`, `[...]`, or escapes are widened to a `*`-only superset (the query language
   supports only `*` — verified). Patterns that can only match dot-names (e.g. `.*`)
   trigger the invisible-files warning. Post: `fnmatch(3)`.
-- [ ] `-iname pattern` — case-insensitive `-name`.
+- [x] `-iname pattern` — case-insensitive `-name`.
   Index: same with the `c` modifier (`== "..."c`). Post: `fnmatch` with `FNM_CASEFOLD`.
-- [ ] `-path pattern` — glob over the whole path as constructed from the root; `/` is an
+- [x] `-path pattern` — glob over the whole path as constructed from the root; `/` is an
   ordinary character.
   Index: **none** — `kMDItemPath` is readable but not queryable (verified). Post: `fnmatch`.
-- [ ] `-ipath pattern` — case-insensitive `-path`. Index: none. Post: `fnmatch` + casefold.
-- [ ] `-wholename` / `-iwholename` — GNU-compat aliases of `-path`/`-ipath`.
-- [ ] `-lname pattern` / `-ilname pattern` — glob on symlink target contents.
+- [x] `-ipath pattern` — case-insensitive `-path`. Index: none. Post: `fnmatch` + casefold.
+- [x] `-wholename` / `-iwholename` — GNU-compat aliases of `-path`/`-ipath`.
+- [x] `-lname pattern` / `-ilname pattern` — glob on symlink target contents.
   Index: none + **warning** (symlinks are not indexed at all). Post: `readlink` + `fnmatch`.
-- [ ] `-regex pattern` / `-iregex pattern` — whole path must match entirely (anchored both
+- [x] `-regex pattern` / `-iregex pattern` — whole path must match entirely (anchored both
   ends). BRE by default, ERE under `-E`, other dialects via `-regextype`.
   Index: none. Post: POSIX `regcomp`/`regexec`.
   Dialect: GNU defaults to emacs regex here — the one silent BSD/GNU divergence; sfind
@@ -129,57 +129,57 @@ rounding. `now` is fixed at startup.
 
 ## Primaries — ownership
 
-- [ ] `-user uname` — owner matches (name, or numeric UID if no such user).
+- [x] `-user uname` — owner matches (name, or numeric UID if no such user).
   Index: `kMDItemFSOwnerUserID == uid` (name resolved first). Post: `lstat` `st_uid`.
-- [ ] `-uid n` — alias of `-user` (macOS accepts names here too, unlike GNU).
-- [ ] `-group gname` — group matches. Index: `kMDItemFSOwnerGroupID`. Post: `lstat` `st_gid`.
-- [ ] `-gid n` — alias of `-group`.
-- [ ] `-nouser` — owner has no passwd entry. Index: none. Post: `getpwuid` miss.
-- [ ] `-nogroup` — group has no group entry. Index: none. Post: `getgrgid` miss.
+- [x] `-uid n` — alias of `-user` (macOS accepts names here too, unlike GNU).
+- [x] `-group gname` — group matches. Index: `kMDItemFSOwnerGroupID`. Post: `lstat` `st_gid`.
+- [x] `-gid n` — alias of `-group`.
+- [x] `-nouser` — owner has no passwd entry. Index: none. Post: `getpwuid` miss.
+- [x] `-nogroup` — group has no group entry. Index: none. Post: `getgrgid` miss.
 
 ## Primaries — stat metadata
 
-- [ ] `-type t` — `t` ∈ `b c d f l p s w` (`w` = whiteout, undocumented but accepted by
+- [x] `-type t` — `t` ∈ `b c d f l p s w` (`w` = whiteout, undocumented but accepted by
   macOS find).
   Index: `d` → `kMDItemContentTypeTree == "public.folder"`; `f` → no narrowing (a `!=
   "public.folder"` clause is unsound for items missing the attribute); `l s p b c w` → no
   narrowing possible + **warning** (these file kinds are not indexed at all).
   Post: `lstat` `st_mode` (or `stat` under `-L`/`-H` per symlink rules).
   Dialect: GNU's `-type f,d` comma lists are not supported (matches macOS).
-- [ ] `-size n[ckMGTP]` — no suffix: `st_size` rounded UP to 512-byte blocks, then compared.
+- [x] `-size n[ckMGTP]` — no suffix: `st_size` rounded UP to 512-byte blocks, then compared.
   With `c`/`k`/`M`/`G`/`T`/`P`: compared against exact bytes `n × scale`, NO rounding
   (verified; differs from GNU, which rounds scaled units up).
   Index: range on `kMDItemFSSize`, widened to cover the rounding boundary. Post: `lstat`
   `st_size` with the exact rule.
   Dialect: GNU suffixes `b` and `w` are rejected (matches macOS).
-- [ ] `-empty` — regular file of size 0, or directory with no entries.
+- [x] `-empty` — regular file of size 0, or directory with no entries.
   Index: `kMDItemFSSize == 0 || kMDItemContentTypeTree == "public.folder"`.
   Post: `st_size == 0` for files; empty `readdir` for directories.
-- [ ] `-perm [-+/]mode` — bare: exact match of bits 07777; `-mode`: all listed bits set;
+- [x] `-perm [-+/]mode` — bare: exact match of bits 07777; `-mode`: all listed bits set;
   `+mode` (BSD) and `/mode` (GNU extension adopted by sfind; macOS find rejects it): any
   listed bit set. Symbolic modes per `chmod(1)`, umask ignored, may not start with `-`.
   Index: **none** (no permissions attribute). Post: `lstat` `st_mode`.
-- [ ] `-links n` — hard link count. Index: none. Post: `lstat` `st_nlink`.
-- [ ] `-inum n` — inode number. Index: none. Post: `lstat` `st_ino`.
-- [ ] `-samefile name` — hard link to `name` (under `-L`, also symlinks resolving to it).
+- [x] `-links n` — hard link count. Index: none. Post: `lstat` `st_nlink`.
+- [x] `-inum n` — inode number. Index: none. Post: `lstat` `st_ino`.
+- [x] `-samefile name` — hard link to `name` (under `-L`, also symlinks resolving to it).
   Index: none. Post: `st_dev`/`st_ino` equality with the reference.
-- [ ] `-sparse` — fewer blocks allocated than size implies. Index: none. Post:
+- [x] `-sparse` — fewer blocks allocated than size implies. Index: none. Post:
   `st_blocks * 512 < st_size`.
-- [ ] `-flags [-+]flags,notflags` — `chflags(1)` file flags. Index: none. Post: `lstat`
+- [x] `-flags [-+]flags,notflags` — `chflags(1)` file flags. Index: none. Post: `lstat`
   `st_flags`. macOS/BSD-only.
 - [ ] `-acl` — file has an extended ACL. Index: none. Post: `acl_get_file`. macOS-only.
-- [ ] `-xattr` — file has any extended attribute. Index: none. Post: `listxattr`. macOS-only.
-- [ ] `-xattrname name` — file has the named xattr. Index: none. Post: `listxattr`.
+- [x] `-xattr` — file has any extended attribute. Index: none. Post: `listxattr`. macOS-only.
+- [x] `-xattrname name` — file has the named xattr. Index: none. Post: `listxattr`.
   macOS-only.
-- [ ] `-fstype type` — filesystem type (plus pseudo-types `local`, `rdonly`).
+- [x] `-fstype type` — filesystem type (plus pseudo-types `local`, `rdonly`).
   Index: none. Post: `statfs`.
 
 ## Primaries — actions
 
 All actions run in the post stage, after filtering.
 
-- [ ] `-print` — path + newline. Always true.
-- [ ] `-print0` — path + NUL (no newline; verified byte-exact).
+- [x] `-print` — path + newline. Always true.
+- [x] `-print0` — path + NUL (no newline; verified byte-exact).
 - [ ] `-ls` — `ls -dgils`-format line (inode, 512-byte `st_blocks`, mode, nlink, owner,
   group, size, mtime, path; `-> target` for symlinks; device numbers for b/c files). Always
   true. Note: prints allocated `st_blocks`, which differs from `-size`'s rounded-up
@@ -198,7 +198,7 @@ All actions run in the post stage, after filtering.
   ordering (sfind sorts matches by depth descending); refuses paths that would traverse `/`;
   incompatible with symlink following; fails on non-empty directories. Suppresses the
   implicit `-print` (undocumented macOS behavior, verified).
-- [ ] `-quit` — terminate immediately with exit 0. Does NOT suppress the implicit `-print`
+- [x] `-quit` — terminate immediately with exit 0. Does NOT suppress the implicit `-print`
   (verified).
 
 **Implicit `-print`**: if none of `-exec`, `-execdir`, `-ok`, `-okdir`, `-ls`, `-print`,
@@ -211,32 +211,32 @@ matter), the expression is wrapped as `( expr ) -print`.
 expression branches that are never evaluated, and the last occurrence wins (verified for
 `-maxdepth`). sfind's planner hoists them out of the AST.
 
-- [ ] `-maxdepth n` — at most n levels below the roots. Post: component-count check relative
+- [x] `-maxdepth n` — at most n levels below the roots. Post: component-count check relative
   to the root.
-- [ ] `-mindepth n` — at least n levels. Post: component-count check.
+- [x] `-mindepth n` — at least n levels. Post: component-count check.
 - [ ] `-depth` — post-order (act on contents before the directory). Ordering directive, same
   as `-d`.
-- [ ] `-depth n` — true if depth relative to the root is n (BSD primary, distinct from bare
+- [x] `-depth n` — true if depth relative to the root is n (BSD primary, distinct from bare
   `-depth`; disambiguated by a numeric next token). Post: component count.
 - [ ] `-prune` — do not descend below the current file; no effect under `-d`.
   Post-processing: evaluate the prune condition on candidate directories, then exclude
   candidates with a pruned ancestor.
 - [ ] `-xdev` — deprecated primary form of `-x`. `-mount` — GNU-compat alias.
 - [ ] `-follow` — deprecated primary form of `-L`.
-- [ ] `-ignore_readdir_race` / `-noignore_readdir_race` — suppress errors for files deleted
+- [x] `-ignore_readdir_race` / `-noignore_readdir_race` — suppress errors for files deleted
   mid-run. Relevant to sfind: index results can be stale; with the flag set, `ENOENT` on a
   candidate is silently dropped; without it, it is a diagnostic + exit 1 (find behavior).
-- [ ] `-noleaf` — accepted, ignored (GNU-compat no-op, matches macOS).
+- [x] `-noleaf` — accepted, ignored (GNU-compat no-op, matches macOS).
 
 ## Operators
 
 Decreasing precedence; all tokens are separate argv elements.
 
-- [ ] `( expression )` — grouping.
-- [ ] `! expression` / `-not expression` — NOT.
-- [ ] `-true` / `-false` — constant primaries.
-- [ ] `expr -and expr` / `expr -a expr` / juxtaposition — AND, short-circuits.
-- [ ] `expr -or expr` / `expr -o expr` — OR, short-circuits.
+- [x] `( expression )` — grouping.
+- [x] `! expression` / `-not expression` — NOT.
+- [x] `-true` / `-false` — constant primaries.
+- [x] `expr -and expr` / `expr -a expr` / juxtaposition — AND, short-circuits.
+- [x] `expr -or expr` / `expr -o expr` — OR, short-circuits.
 
 Planner note: for `! p`, the narrowing `¬N(p)` is only sound when `N(p)` is exact on indexed
 values; otherwise the branch contributes match-all. For disjunctions, branch narrowings are
@@ -244,16 +244,16 @@ OR-ed; an untranslatable branch makes that branch match-all.
 
 ## GNU extensions adopted
 
-- [ ] `-perm /mode` — any-bit form (see `-perm` above).
+- [x] `-perm /mode` — any-bit form (see `-perm` above).
 - [ ] `-printf format` — GNU directive set (`%p %f %h %P %H %l %s %b %k %S %y %Y %m %M %n %i
   %d %D %F %u %U %g %G`, time forms `%a %c %t %B` + `%A<k> %C<k> %T<k> %B<k>` + `@` epoch,
   escapes `\n \t \0 \\ \NNN` and `\c`). Post: formatted from `lstat` + path data. macOS find
   has no `-printf`, so no conflict.
-- [ ] `-regextype type` — regex dialect selection for `-regex`/`-iregex` (at minimum:
+- [x] `-regextype type` — regex dialect selection for `-regex`/`-iregex` (at minimum:
   `posix-basic`, `posix-extended`; emacs deferred). Overrides `-E`.
-- [ ] `-readable` / `-writable` / `-executable` — `access(2)` checks. Index: none. Post:
+- [x] `-readable` / `-writable` / `-executable` — `access(2)` checks. Index: none. Post:
   `access`.
-- [ ] `-daystart` — measure `-atime/-ctime/-mtime/-Btime` day boundaries from the start of
+- [x] `-daystart` — measure `-atime/-ctime/-mtime/-Btime` day boundaries from the start of
   today instead of 24h-from-now.
 
 ## GNU features deferred (documented, not planned for v1)

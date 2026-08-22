@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import SFindCore
 import Testing
@@ -80,6 +81,37 @@ import Testing
         #expect(
             try Filter.relativeMatches(["-inum", "\(info.inode)"], in: tree)
                 == ["hardlink", "original"])
+    }
+
+    @Test func sparseFiles() throws {
+        let tree = try TempTree()
+        let path = tree.root + "/sparse.bin"
+        let fd = open(path, O_CREAT | O_WRONLY, 0o644)
+        #expect(fd >= 0)
+        #expect(ftruncate(fd, 10 * 1024 * 1024) == 0)
+        close(fd)
+        try tree.file("dense", size: 4096)
+        #expect(try Filter.relativeMatches(["-type", "f", "-sparse"], in: tree) == ["sparse.bin"])
+    }
+
+    @Test func flagsMatching() throws {
+        let tree = try TempTree()
+        let path = try tree.file("flagged")
+        try tree.file("plain")
+        #expect(chflags(path, UInt32(UF_HIDDEN)) == 0)
+        let files = { (tokens: [String]) in
+            try Filter.relativeMatches(["-type", "f"] + tokens, in: tree)
+        }
+        #expect(try files(["-flags", "hidden"]) == ["flagged"])
+        #expect(try files(["-flags", "-hidden"]) == ["flagged"])
+        #expect(try files(["-flags", "nohidden"]) == ["plain"])
+    }
+
+    @Test func fstypePseudoTypes() throws {
+        let tree = try TempTree()
+        try tree.file("f")
+        #expect(try Filter.relativeMatches(["-type", "f", "-fstype", "local"], in: tree) == ["f"])
+        #expect(try Filter.relativeMatches(["-fstype", "nosuchfs"], in: tree) == [])
     }
 
     @Test func samefile() throws {

@@ -58,7 +58,7 @@ jobs:
           echo "Spotlight available: $available"
       - name: Run Spotlight integration tests
         if: steps.spotlight.outputs.available == 'true'
-        run: SFIND_INTEGRATION=1 swift test --filter IntegrationTests
+        run: SFIND_INTEGRATION=1 swift test --no-parallel --filter IntegrationTests
       - name: Integration tests skipped
         if: steps.spotlight.outputs.available != 'true'
         run: echo "::warning::Spotlight unavailable on this runner; integration tests skipped"

@@ -115,6 +115,7 @@ import Testing
             try Filter.relativeMatches(["-type", "f"] + tokens, in: tree)
         }
         #expect(try files(["-readable"]) == ["exec", "open"])
+        #expect(try files(["-writable"]) == ["exec", "open"])
         #expect(try files(["-executable"]) == ["exec"])
     }
 
