@@ -13,9 +13,15 @@ public struct CommandParser {
         var index = 0
 
         // Option phase: getopt-style. Bundling works (-EXdsx); parsing stops at the
-        // first non-option argument or at "--".
+        // first non-option argument or at "--". sfind's own long flags are accepted
+        // here too.
         optionLoop: while index < arguments.count {
             let arg = arguments[index]
+            if arg == "--mdfind" {
+                options.translateOnly = true
+                index += 1
+                continue
+            }
             guard arg.count >= 2, arg.hasPrefix("-"), !arg.hasPrefix("--") else { break }
             var chars = arg.dropFirst()
             // A bundle is valid when every char is an option letter, except that an "f"
@@ -84,7 +90,9 @@ public struct CommandParser {
         var tokens: [String] = []
         while index < arguments.count {
             let arg = arguments[index]
-            if arg == "--expr" {
+            if arg == "--mdfind" {
+                options.translateOnly = true
+            } else if arg == "--expr" {
                 index += 1
                 guard index < arguments.count else {
                     throw ParseError("--expr: requires additional arguments")

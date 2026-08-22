@@ -69,8 +69,8 @@ jobs:
 
       - name: Package
         run: |
-          cp LICENSE README.md release/
-          tar -C release -czf "sfind-$TAG-universal-apple-macosx.tar.gz" sfind LICENSE README.md
+          cp LICENSE README.md docs/sfind.1 release/
+          tar -C release -czf "sfind-$TAG-universal-apple-macosx.tar.gz" sfind sfind.1 LICENSE README.md
           shasum -a 256 sfind-*.tar.gz > SHA256SUMS
 
       - name: Create release and upload artifacts

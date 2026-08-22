@@ -17,6 +17,8 @@ public struct FindOptions: Equatable, Sendable {
     public var safeOutput = false
     /// -s: lexicographic result order.
     public var sorted = false
+    /// --mdfind: print the equivalent mdfind invocation instead of running the query.
+    public var translateOnly = false
 
     public init() {}
 }

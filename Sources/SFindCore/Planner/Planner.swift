@@ -58,6 +58,9 @@ public struct QueryPlan: Equatable, Sendable {
     /// index can return (e.g. `-type l`) — skip the query entirely.
     public var queryString: String?
     public var warnings: [PlanWarning]
+    /// Predicates the query cannot express (their filtering happens post-query), in
+    /// expression order. Used by --mdfind to note that its results are a superset.
+    public var postFilterOnly: [String] = []
 
     /// The tier-safe match-all: `kMDItemFSName == "*"` alone returns nothing in
     /// fully-indexed trees, and `public.item` alone returns nothing in the reduced
@@ -88,13 +91,43 @@ public struct Planner {
         collectWarnings(expression, into: &warnings)
         let narrowing = try narrow(
             expression, daystart: command.globals.daystart)
+        var postOnly: [String] = []
+        collectPostFilterOnly(expression, underNegation: false, into: &postOnly)
         switch narrowing {
         case .impossible:
-            return QueryPlan(queryString: nil, warnings: warnings)
+            return QueryPlan(queryString: nil, warnings: warnings, postFilterOnly: postOnly)
         case .unconstrained:
-            return QueryPlan(queryString: QueryPlan.matchAll, warnings: warnings)
+            return QueryPlan(
+                queryString: QueryPlan.matchAll, warnings: warnings, postFilterOnly: postOnly)
         case .query(let q):
-            return QueryPlan(queryString: q, warnings: warnings)
+            return QueryPlan(queryString: q, warnings: warnings, postFilterOnly: postOnly)
+        }
+    }
+
+    /// Names the predicates whose truth the query cannot express: those with no index
+    /// narrowing, plus anything under a negation (whose narrowing must be discarded).
+    private func collectPostFilterOnly(
+        _ expression: Expression, underNegation: Bool, into result: inout [String]
+    ) {
+        func add(_ name: String) {
+            if !result.contains(name) { result.append(name) }
+        }
+        switch expression {
+        case .and(let children), .or(let children):
+            for child in children {
+                collectPostFilterOnly(child, underNegation: underNegation, into: &result)
+            }
+        case .not(let child):
+            collectPostFilterOnly(child, underNegation: true, into: &result)
+        case .primary(let primary):
+            guard let name = primary.predicateDisplayName else { return }
+            if underNegation {
+                add("! " + name)
+                return
+            }
+            if case .unconstrained? = try? narrowPrimary(primary, daystart: false) {
+                add(name)
+            }
         }
     }
 

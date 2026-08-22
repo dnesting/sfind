@@ -106,6 +106,30 @@ import Testing
         #expect(ours.status == oracle.status, "status for tokens: \(tokens)")
     }
 
+    @Test func sortedOrderMatchesFindExactly() throws {
+        // -s output must match find's sequence, not just its set: find sorts each
+        // directory during traversal, so a directory's contents precede its later
+        // siblings ("a/b" before "a.c" despite '.' < '/'). sfind reproduces this with
+        // a component-wise sort.
+        let tree = try ParityTree()
+        let oracle = Process()
+        let pipe = Pipe()
+        oracle.executableURL = URL(fileURLWithPath: "/usr/bin/find")
+        oracle.arguments = ["-s", tree.root, "-name", "*.md", "-o", "-type", "d"]
+        oracle.standardOutput = pipe
+        try oracle.run()
+        let expected = String(
+            decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        oracle.waitUntilExit()
+
+        let command = try CommandParser().parse(
+            ["-s", tree.root, "-name", "*.md", "-o", "-type", "d"])
+        let sink = CollectingSink()
+        _ = Runner(command: command, environment: .live(), sink: sink)
+            .run(source: ArraySource(tree.candidates()))
+        #expect(sink.text == expected)
+    }
+
     @Test func print0Parity() throws {
         let tree = try ParityTree()
         let tokens = ["-name", "*.md", "-print0"]

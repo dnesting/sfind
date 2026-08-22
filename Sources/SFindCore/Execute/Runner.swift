@@ -37,6 +37,16 @@ public final class Runner {
         self.promptResponder = promptResponder
     }
 
+    /// Sorts candidates in find -s order: lexicographic over path components.
+    static func findSorted(_ candidates: [Candidate]) -> [Candidate] {
+        candidates
+            .map {
+                (key: $0.path.split(separator: "/", omittingEmptySubsequences: true), value: $0)
+            }
+            .sorted { $0.key.lexicographicallyPrecedes($1.key) }
+            .map(\.value)
+    }
+
     public func run(source: CandidateSource) -> Int32 {
         let evaluator: Evaluator
         let candidates: [Candidate]
@@ -65,9 +75,12 @@ public final class Runner {
 
         var ordered = candidates
         if command.options.sorted || pruneActive {
-            // -prune needs parents processed before descendants; lexicographic order
-            // guarantees the prefix comes first.
-            ordered.sort { $0.path < $1.path }
+            // Component-wise lexicographic order reproduces find -s (which sorts each
+            // directory during traversal, so a directory's contents come before its
+            // later siblings — plain string order differs at the '.' < '/' boundary).
+            // -prune also needs parents processed before descendants, which this
+            // order guarantees.
+            ordered = Runner.findSorted(ordered)
         }
         if hasDelete {
             // Children before parents so rmdir succeeds.

@@ -1,0 +1,155 @@
+.Dd August 22, 2026
+.Dt SFIND 1
+.Os
+.Sh NAME
+.Nm sfind
+.Nd find(1) backed by the Spotlight index
+.Sh SYNOPSIS
+.Nm
+.Op Fl H | L | P
+.Op Fl EXdsx
+.Op Fl f Ar path
+.Ar path ...
+.Op Fl -expr Ar string
+.Op Ar expression
+.Nm
+.Fl -mdfind
+.Ar path ...
+.Op Ar expression
+.Sh DESCRIPTION
+.Nm
+evaluates
+.Xr find 1
+expressions against the macOS Spotlight index instead of walking the
+filesystem.
+On indexed trees, searches that would visit millions of inodes return in
+milliseconds.
+.Pp
+BSD
+.Xr find 1
+semantics are ground truth: the expression grammar, primaries, operators,
+numeric argument forms
+.Pq Ar +n , -n , n ,
+time rounding, size rounding, symlink modes
+.Pq Fl H | L | P ,
+the implicit
+.Ic -print
+rule, and exit status all match
+.Pa /usr/bin/find
+and are verified against it by the test suite.
+Conflict-free GNU extensions are also accepted:
+.Ic -printf , -regextype , -readable , -writable , -executable , -daystart ,
+and the
+.Ic -perm Ar /mode
+spelling.
+.Pp
+Internally the expression is translated into a Spotlight query that
+over-approximates it
+.Pq the index narrows ,
+and every candidate is then re-verified exactly with
+.Xr lstat 2 ,
+.Xr fnmatch 3 ,
+and
+.Xr regexec 3
+before actions run
+.Pq the post-filter decides .
+Correctness never depends on the index; only completeness does
+.Pq see Sx CAVEATS .
+.Sh SFIND OPTIONS
+In addition to the
+.Xr find 1
+options
+.Fl H , L , P , E , X , d , f , s ,
+and
+.Fl x ,
+.Nm
+accepts double-dash flags
+.Pq a namespace find never uses :
+.Bl -tag -width Fl
+.It Fl -expr Ar string
+Supply expression tokens as a single string.
+Whitespace splits tokens; single quotes, double quotes, and backslashes
+group and escape; unquoted parentheses are self-delimiting; an unquoted
+.Ql !\&
+is self-delimiting only where a new token would start, so fnmatch classes
+like
+.Ql [!a]*
+survive.
+No variable expansion, globbing, or substitution is performed.
+The result is spliced into the expression where the flag appears and may be
+mixed with discrete tokens:
+.Bd -literal -offset indent
+sfind ~/Docs --expr '(-name "*.md" -o -name "*.txt") -mtime -7'
+.Ed
+.It Fl -mdfind
+Do not run the search; instead print the equivalent
+.Xr mdfind 1
+invocation for the translated Spotlight query.
+Expression terms the query language cannot express are reported to standard
+error, since the printed query then returns a superset of the expression's
+matches.
+.It Fl -help , Fl \&?
+Print usage and a summary.
+.It Fl -version
+Print the version.
+.El
+.Sh EXIT STATUS
+.Ex -std
+As with
+.Xr find 1 ,
+the match count does not affect the exit status; errors
+.Pq missing operands, unreadable files, failed Fl exec Ar ... No + children
+do.
+.Sh EXAMPLES
+Markdown files changed this week:
+.Bd -literal -offset indent
+sfind ~ -name '*.md' -mtime -7
+.Ed
+.Pp
+Large downloads, sorted:
+.Bd -literal -offset indent
+sfind -s ~/Downloads -size +100M -type f
+.Ed
+.Pp
+Show the Spotlight query that would run:
+.Bd -literal -offset indent
+sfind ~ --mdfind -name '*.swift' -newermt 'yesterday'
+.Ed
+.Sh CAVEATS
+Spotlight does not index everything, and
+.Nm
+deliberately never falls back to walking the filesystem.
+Invisible to the index
+.Pq and therefore to Nm :
+dotfiles, symlinks, sockets, FIFOs, device nodes, application bundle
+contents,
+.Pa /usr , /bin , /etc , /tmp ,
+volumes with indexing disabled, and any tree under a
+.Pa .metadata_never_index
+marker or
+.Pa *.noindex
+directory.
+.Nm
+warns on standard error when an expression term provably requires such files
+.Pq for example Ic -type l ,
+and, after an empty result, when a search root turns out to be excluded from
+the index.
+.Pp
+Result ordering is unspecified
+.Pq the index returns results in arbitrary order ;
+use
+.Fl s
+for deterministic, find-compatible ordering.
+.Fl atime
+and
+.Fl ctime
+are evaluated exactly but cannot narrow the query
+.Pq Spotlight indexes neither .
+.Sh SEE ALSO
+.Xr find 1 ,
+.Xr mdfind 1 ,
+.Xr mdutil 1
+.Pp
+.Lk https://github.com/dnesting/sfind
+— SPEC.md documents every option's index-vs-post-filter determination and
+the verified behavioral details.

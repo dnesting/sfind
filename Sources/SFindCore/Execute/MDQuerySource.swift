@@ -43,20 +43,24 @@ public struct RootScope: Sendable {
         return components.dropLast().contains { $0.hasPrefix(".") }
     }
 
-    /// Returns a human-readable reason if an exclusion marker makes this root
-    /// invisible to Spotlight (.metadata_never_index in the tree, or a .noindex
-    /// path component).
-    public var exclusionReason: String? {
+    /// If an exclusion marker makes this root invisible to Spotlight, returns the
+    /// directory carrying the .metadata_never_index marker (or the .noindex ancestor).
+    /// This is a cheap O(path depth) stat walk up the ancestors — no directory scan.
+    public var exclusionMarkerDirectory: String? {
         var dir = canonical
         while true {
             if FileManager.default.fileExists(atPath: dir + "/.metadata_never_index") {
-                return "\(dir) has a .metadata_never_index marker"
+                return dir
             }
             guard let slash = dir.lastIndex(of: "/"), slash != dir.startIndex else { break }
             dir = String(dir[..<slash])
         }
-        if canonical.split(separator: "/").contains(where: { $0.hasSuffix(".noindex") }) {
-            return "path contains a .noindex directory"
+        var prefix = ""
+        for component in canonical.split(separator: "/") {
+            prefix += "/" + component
+            if component.hasSuffix(".noindex") {
+                return prefix
+            }
         }
         return nil
     }

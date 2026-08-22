@@ -248,6 +248,49 @@ public enum Primary: Hashable, Sendable {
 }
 
 extension Primary {
+    /// The option spelling for predicates (nil for actions, globals, constants, and
+    /// traversal controls, which never constrain the query).
+    public var predicateDisplayName: String? {
+        switch self {
+        case .name(let p, let ci): return "\(ci ? "-iname" : "-name") \(p)"
+        case .path(let p, let ci): return "\(ci ? "-ipath" : "-path") \(p)"
+        case .lname(let p, let ci): return "\(ci ? "-ilname" : "-lname") \(p)"
+        case .regex(let p, let ci): return "\(ci ? "-iregex" : "-regex") \(p)"
+        case .time(let field, _):
+            switch field {
+            case .access: return "-atime/-amin"
+            case .birth: return "-Btime/-Bmin"
+            case .change: return "-ctime/-cmin"
+            case .modify: return "-mtime/-mmin"
+            }
+        case .newer(let field, _): return "-newer\(field.rawValue)*"
+        case .user: return "-user"
+        case .group: return "-group"
+        case .nouser: return "-nouser"
+        case .nogroup: return "-nogroup"
+        case .type(let t): return "-type \(t.rawValue)"
+        case .size: return "-size"
+        case .perm: return "-perm"
+        case .links: return "-links"
+        case .inum: return "-inum"
+        case .samefile: return "-samefile"
+        case .empty: return "-empty"
+        case .sparse: return "-sparse"
+        case .flags: return "-flags"
+        case .acl: return "-acl"
+        case .xattr: return "-xattr"
+        case .xattrName: return "-xattrname"
+        case .fstype: return "-fstype"
+        case .readable: return "-readable"
+        case .writable: return "-writable"
+        case .executable: return "-executable"
+        case .depth: return "-depth n"
+        case .alwaysTrue, .alwaysFalse, .print, .print0, .ls, .exec, .delete, .quit,
+            .printf, .prune, .global:
+            return nil
+        }
+    }
+
     /// Whether this primary's lexical presence suppresses the implicit -print.
     /// Verified macOS behavior: the documented set plus -delete (undocumented);
     /// -quit does NOT suppress it.

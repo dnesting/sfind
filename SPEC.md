@@ -33,8 +33,11 @@ Checkbox legend: `[ ]` planned, `[x]` implemented with per-option tests.
   Output-time filter.
 - [x] `-d` — depth-first (post-order). Affects output/action ordering; makes `-prune` inert.
 - [x] `-f path` — add `path` to the roots (allows roots beginning with `!`, `(`, `-`).
-- [x] `-s` — lexicographic result order. sfind: sort the final result set (this is also the
-  recommended flag for deterministic output, since Spotlight's natural order is unspecified).
+- [x] `-s` — find-compatible sorted order: lexicographic over path components, which
+  reproduces find's per-directory traversal sort (a directory's contents precede its
+  later siblings — plain string sort differs at the `.` < `/` boundary). Verified
+  order-sensitively against find. Also the recommended flag for deterministic output,
+  since Spotlight's natural order is unspecified.
 - [x] `-x` — do not cross device boundaries. Post: compare `st_dev` against the root's.
 
 Option parsing is getopt-style: options may bundle (`-EXdsx`), and the first non-option
@@ -68,6 +71,13 @@ argument ends option parsing.
   appears. Repeatable, and freely mixable with discrete expression arguments. Parser-level
   feature: after tokenization the result is indistinguishable from discrete arguments (same
   AST, same MDQuery translation, same post-filter).
+
+- [x] `--mdfind` — print the equivalent `mdfind` invocation (`mdfind -onlyin <root> …
+  -literal '<query>'`) instead of running the search. Expression terms the query language
+  cannot express are noted on stderr, since the printed query returns a superset of the
+  expression's matches. Exits 1 when the expression can only match unindexed files.
+- [x] `--help` / `-?` — usage and option summary. `--version` — version. (Recognized as
+  the first argument.)
 
 ## Primaries — time
 
@@ -269,10 +279,13 @@ These are inherent to the index-backed design and are documented behavior, not b
 1. **Invisible files.** Spotlight does not index: dotfiles (never returned by any query),
    symlinks, sockets, FIFOs, device nodes, whiteouts, app-bundle contents, `/usr`, `/bin`,
    `/etc`, `/tmp`, `$TMPDIR` (reduced), volumes with indexing disabled, and any tree under a
-   `.metadata_never_index` marker or `*.noindex` directory. sfind emits a stderr warning when
-   (a) a predicate provably requires such files (`-type l/s/p/b/c/w`, `-lname`, dot-anchored
-   `-name` patterns), or (b) a search root appears to be unindexed (probe: exclusion markers
-   on ancestor paths + a shallow readdir-vs-index comparison).
+   `.metadata_never_index` marker or `*.noindex` directory. Warning policy: sfind warns
+   eagerly only when an expression term provably requires such files (`-type l/s/p/b/c/w`,
+   `-lname`, dot-anchored `-name` patterns). Scope-level diagnostics (an exclusion marker on
+   an ancestor — detected by an O(path-depth) stat walk, not a directory scan — or a root
+   inside a hidden directory) are deferred: they print only when the index returned nothing,
+   as an explanation of the emptiness. Warning paths are rendered relative to the working
+   directory when the root was typed relative.
 2. **Result ordering** is unspecified (find's is traversal order). Use `-s` for deterministic
    lexicographic order. `-delete` still guarantees children-before-parents.
 3. **Hidden-directory scopes** are reachable only when the root itself is the hidden

@@ -1,6 +1,7 @@
 PRODUCT_NAME = sfind
 PREFIX ?= /usr/local
 BINDIR = $(DESTDIR)$(PREFIX)/bin
+MANDIR = $(DESTDIR)$(PREFIX)/share/man/man1
 SWIFT ?= swift
 SWIFT_BUILD_FLAGS = --configuration release --disable-sandbox
 
@@ -24,11 +25,12 @@ format:
 	$(SWIFT) format --in-place --recursive Sources Tests Package.swift
 
 install: build
-	install -d "$(BINDIR)"
+	install -d "$(BINDIR)" "$(MANDIR)"
 	install -m 0755 "$$($(SWIFT) build --show-bin-path $(SWIFT_BUILD_FLAGS))/$(PRODUCT_NAME)" "$(BINDIR)/"
+	install -m 0644 docs/$(PRODUCT_NAME).1 "$(MANDIR)/"
 
 uninstall:
-	rm -f "$(BINDIR)/$(PRODUCT_NAME)"
+	rm -f "$(BINDIR)/$(PRODUCT_NAME)" "$(MANDIR)/$(PRODUCT_NAME).1"
 
 universal:
 	./scripts/build-universal.sh
