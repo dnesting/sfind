@@ -52,20 +52,21 @@ import Testing
     }
 
     @Test func scopeWarningOnlyWhenIndexEmpty() throws {
-        // A marker-excluded root with no index results explains itself after the fact;
-        // predicate-level warnings are the only eager ones.
+        // Scope diagnostics are post-hoc: after an empty result, the authoritative
+        // probe asks the index whether anything under the root is indexed at all, and
+        // the marker walk only annotates the likely cause.
         let tree = try TempTree()
         try tree.file(".metadata_never_index")
         let sink = CollectingSink()
         _ = SFindCLI.run(arguments: [tree.root, "-name", "*.zzz"], sink: sink)
-        #expect(sink.diagnostics.contains { $0.contains("excluded from Spotlight") })
+        #expect(sink.diagnostics.contains { $0.contains("not in the Spotlight index") })
+        #expect(sink.diagnostics.contains { $0.contains(".metadata_never_index") })
 
-        // Without a marker there is no scope warning even when nothing matches.
+        // Without a marker the same unindexed-root fact is reported without a cause.
         let plain = try TempTree()
-        try plain.file("data.sample")
         let quiet = CollectingSink()
         _ = SFindCLI.run(arguments: [plain.root, "-name", "*.zzz"], sink: quiet)
-        #expect(!quiet.diagnostics.contains { $0.contains("excluded from Spotlight") })
+        #expect(!quiet.diagnostics.contains { $0.contains(".metadata_never_index") })
     }
 
     @Test func relativeWarningPaths() throws {

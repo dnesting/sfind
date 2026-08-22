@@ -13,21 +13,24 @@ extension OutputSink {
     }
 }
 
-/// Buffered writer over file handles (stdout/stderr for the real CLI).
+/// Buffered writer over file handles (stdout/stderr for the real CLI). Like stdio,
+/// output is line-buffered on a terminal and block-buffered otherwise.
 public final class FileHandleSink: OutputSink {
     private let output: FileHandle
     private let errors: FileHandle
     private var buffer: [UInt8] = []
     private let bufferLimit = 1 << 16
+    private let lineBuffered: Bool
 
     public init(output: FileHandle = .standardOutput, errors: FileHandle = .standardError) {
         self.output = output
         self.errors = errors
+        self.lineBuffered = isatty(output.fileDescriptor) == 1
     }
 
     public func write(_ bytes: [UInt8]) {
         buffer.append(contentsOf: bytes)
-        if buffer.count >= bufferLimit {
+        if buffer.count >= bufferLimit || (lineBuffered && bytes.contains(0x0A)) {
             flush()
         }
     }

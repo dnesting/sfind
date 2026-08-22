@@ -34,8 +34,26 @@ public struct Candidate: Equatable, Sendable {
 
 /// Where candidates come from: MDQuery in production, a plain array in tests (which is
 /// what lets full expression semantics be tested with no Spotlight involvement).
+/// Sources stream: candidates are delivered as they become available, so output can
+/// flow before the search completes.
 public protocol CandidateSource {
-    func candidates() throws -> [Candidate]
+    /// Calls `body` for each candidate; `body` returns false to stop early (e.g.
+    /// -quit). Returns the number of candidates delivered.
+    @discardableResult
+    func forEachCandidate(_ body: (Candidate) throws -> Bool) throws -> Int
+}
+
+extension CandidateSource {
+    /// Collects the full candidate list (used when ordering is required: -s, -prune,
+    /// -delete).
+    public func collect() throws -> [Candidate] {
+        var result: [Candidate] = []
+        try forEachCandidate { candidate in
+            result.append(candidate)
+            return true
+        }
+        return result
+    }
 }
 
 public struct ArraySource: CandidateSource {
@@ -45,7 +63,13 @@ public struct ArraySource: CandidateSource {
         self.items = items
     }
 
-    public func candidates() throws -> [Candidate] {
-        items
+    @discardableResult
+    public func forEachCandidate(_ body: (Candidate) throws -> Bool) throws -> Int {
+        var delivered = 0
+        for item in items {
+            delivered += 1
+            if try !body(item) { break }
+        }
+        return delivered
     }
 }

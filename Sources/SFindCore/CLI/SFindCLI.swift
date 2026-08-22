@@ -67,35 +67,29 @@ public enum SFindCLI {
         }
 
         let source = MDQuerySource(queryString: plan.queryString, roots: roots)
-        let candidates: [Candidate]
-        do {
-            candidates = try source.candidates()
-        } catch {
-            sink.diagnostic("\(error)")
-            sink.flush()
-            return 1
-        }
+        let runner = Runner(command: command, environment: environment, sink: sink)
+        let status = runner.run(source: source)
 
-        // Scope diagnostics are deferred and fire only when the index contributed
-        // nothing beyond the root operands themselves — then they explain the
-        // emptiness instead of pre-judging the search.
-        if candidates.count <= roots.count, plan.queryString != nil {
-            for root in roots {
+        // Scope diagnostics are deferred: when the index returned nothing, ask it the
+        // authoritative question per root — "is ANYTHING under this root indexed?" —
+        // and explain the emptiness. This stays accurate even when heuristics
+        // (markers, hidden dirs) would guess wrong in either direction.
+        if source.indexResultCount == 0, plan.queryString != nil {
+            for root in roots where !MDQuerySource.indexHasAnyEntry(under: root) {
+                var message =
+                    "warning: \(root.typed): this search root is not in the Spotlight "
+                    + "index (nothing under it is indexed)"
                 if let marker = root.exclusionMarkerDirectory {
-                    sink.diagnostic(
-                        "warning: \(root.typed): no index results; "
-                            + "\(display(marker, like: root)) is excluded from Spotlight "
-                            + "(.metadata_never_index or .noindex)")
+                    message +=
+                        "; likely cause: \(display(marker, like: root)) carries a "
+                        + ".metadata_never_index marker or .noindex name"
                 } else if root.isInsideHiddenDirectory {
-                    sink.diagnostic(
-                        "warning: \(root.typed): no index results; the path is inside a "
-                            + "hidden directory, where Spotlight scoping is unreliable")
+                    message += "; likely cause: the path is inside a hidden directory"
                 }
+                sink.diagnostic(message)
+                sink.flush()
             }
         }
-
-        let runner = Runner(command: command, environment: environment, sink: sink)
-        let status = runner.run(source: ArraySource(candidates))
         return sawError ? 1 : status
     }
 

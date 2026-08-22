@@ -104,8 +104,11 @@ directory→`kMDItemContentTypeTree == "public.folder"`.
 
 - C API via `import CoreServices`: `MDQueryCreate` → `MDQuerySetSearchScope` (CFArray of
   paths; **union** semantics verified; tildes are NOT expanded — expand them first) →
-  `MDQueryExecute(kMDQuerySynchronous)`, which blocks and needs no caller run loop
-  (MDQuery.h). NOT NSMetadataQuery (async-only, requires a run-loop/notification dance).
+  asynchronous `MDQueryExecute(query, 0)` with `MDQuerySetBatchingParameters`, progress
+  notifications on the calling thread's run loop, and incremental draining — results
+  stream to the post-filter as batches arrive, a closed pipe or -quit stops the query
+  via `MDQueryStop`. (Synchronous mode was the original design; it delivered everything
+  at once and deadlocked under parallel test executors.)
 - Attribute fetch: `MDQueryGetAttributeValueOfResultAtIndex` for streaming;
   `MDItemsCopyAttributes` (10.12+) for true cross-item batches. Avoid `valueListAttrs`
   (uniqued-list memory blowup, wrong tool). `MDItemCreate(path)` works for arbitrary existing

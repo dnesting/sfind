@@ -90,6 +90,18 @@ import Testing
         #expect(lines == [tree.root + "/a", tree.root + "/b", tree.root + "/c"])
     }
 
+    @Test func quitStopsStreamingEarly() throws {
+        // Without ordering flags the runner streams; -quit must stop the stream after
+        // the first candidate (the root, in array order).
+        let tree = try TempTree()
+        try tree.file("a")
+        try tree.file("b")
+        let (lines, _, status, _) = try Filter.run(
+            ["-print", "-quit"], root: tree.root, candidates: tree.candidates())
+        #expect(lines == [tree.root])
+        #expect(status == 0)
+    }
+
     @Test func xdevFiltersOtherDevices() throws {
         let tree = try TempTree()
         try tree.file("here")

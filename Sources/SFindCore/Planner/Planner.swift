@@ -205,6 +205,11 @@ public struct Planner {
         switch primary {
         case .name(let pattern, let caseInsensitive):
             let value = Planner.globQueryValue(pattern)
+            if value == "*" {
+                // kMDItemFSName == "*" returns NOTHING in fully-indexed trees
+                // (verified); only the tier-safe match-all base covers everything.
+                return .unconstrained
+            }
             let modifier = caseInsensitive ? "c" : ""
             return .query("kMDItemFSName == \"\(value)\"\(modifier)")
 

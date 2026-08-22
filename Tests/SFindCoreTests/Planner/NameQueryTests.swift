@@ -5,7 +5,9 @@ import Testing
     @Test func starOnlyPatternsTranslateDirectly() throws {
         #expect(try PlannerFixtures.query("-name", "*.md") == "kMDItemFSName == \"*.md\"")
         #expect(try PlannerFixtures.query("-name", "README") == "kMDItemFSName == \"README\"")
-        #expect(try PlannerFixtures.query("-name", "*") == "kMDItemFSName == \"*\"")
+        // A bare * narrowing would be kMDItemFSName == "*", which returns NOTHING in
+        // fully-indexed trees (verified quirk); it must widen to the match-all base.
+        #expect(try PlannerFixtures.query("-name", "*") == QueryPlan.matchAll)
     }
 
     @Test func inameAddsCaseModifier() throws {
@@ -16,7 +18,7 @@ import Testing
         // The query language supports only `*` (verified): ? and [...] widen.
         #expect(try PlannerFixtures.query("-name", "a?b") == "kMDItemFSName == \"a*b\"")
         #expect(try PlannerFixtures.query("-name", "[abc].txt") == "kMDItemFSName == \"*.txt\"")
-        #expect(try PlannerFixtures.query("-name", "[!x]*") == "kMDItemFSName == \"*\"")
+        #expect(try PlannerFixtures.query("-name", "[!x]*") == QueryPlan.matchAll)
         // Adjacent wildcards collapse.
         #expect(try PlannerFixtures.query("-name", "a**??b") == "kMDItemFSName == \"a*b\"")
         // An unterminated class is a literal bracket (fnmatch behavior).

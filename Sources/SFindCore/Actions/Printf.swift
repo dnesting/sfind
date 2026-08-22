@@ -17,7 +17,7 @@ struct PrintfFormat {
         _ format: String, input: Input, warn: (String) -> Void
     ) -> (bytes: [UInt8], stop: Bool) {
         var out = ""
-        var chars = Array(format)
+        let chars = Array(format)
         var i = 0
         while i < chars.count {
             let c = chars[i]

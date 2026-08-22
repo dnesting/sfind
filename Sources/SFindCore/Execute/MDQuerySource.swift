@@ -66,55 +66,156 @@ public struct RootScope: Sendable {
     }
 }
 
-/// Runs the planned MDQuery over the given scopes and yields candidates with output
-/// paths mapped back onto the user's typed roots.
-public struct MDQuerySource: CandidateSource {
-    public var queryString: String?
-    public var roots: [RootScope]
+private struct UnsafeSendableBox<T>: @unchecked Sendable {
+    let value: T
+}
+
+/// Runs the planned MDQuery over the given scopes, streaming candidates as the index
+/// delivers result batches (asynchronous execution + progress notifications), with
+/// output paths mapped back onto the user's typed roots.
+public final class MDQuerySource: CandidateSource {
+    public let queryString: String?
+    public let roots: [RootScope]
+    /// Results the index itself returned (excludes the seeded roots). The
+    /// authoritative "did the index have anything for us" signal.
+    public private(set) var indexResultCount = 0
+
+    // Streaming state, valid only during forEachCandidate.
+    private var query: MDQuery?
+    private var processed = 0
+    private var seen = Set<String>()
+    private var orderedRoots: [RootScope] = []
+    private var body: ((Candidate) throws -> Bool)?
+    private var delivered = 0
+    private var stopped = false
+    private var failure: Error?
 
     public init(queryString: String?, roots: [RootScope]) {
         self.queryString = queryString
         self.roots = roots
     }
 
-    public func candidates() throws -> [Candidate] {
+    @discardableResult
+    public func forEachCandidate(_ body: (Candidate) throws -> Bool) throws -> Int {
         // The scope query never returns the roots themselves; find prints a root when
         // it matches, so seed them explicitly (the post-filter decides anyway).
-        var seen = Set<String>()
-        var result: [Candidate] = []
-        for root in roots {
-            if seen.insert(root.typed).inserted {
-                result.append(Candidate(path: root.typed, depth: 0, rootDevice: root.device))
+        seen.removeAll()
+        delivered = 0
+        stopped = false
+        failure = nil
+        processed = 0
+        indexResultCount = 0
+        for root in roots where seen.insert(root.typed).inserted {
+            delivered += 1
+            if try !body(Candidate(path: root.typed, depth: 0, rootDevice: root.device)) {
+                return delivered
             }
         }
-        guard let queryString, !roots.isEmpty else { return result }
+        guard let queryString, !roots.isEmpty else { return delivered }
 
         guard let query = MDQueryCreate(kCFAllocatorDefault, queryString as CFString, nil, nil)
         else {
             throw ParseError("failed to create Spotlight query: \(queryString)")
         }
+        self.query = query
+        defer { self.query = nil }
         MDQuerySetSearchScope(query, roots.map(\.absolute) as CFArray, 0)
-        guard MDQueryExecute(query, CFOptionFlags(kMDQuerySynchronous.rawValue)) else {
-            throw ParseError("Spotlight query failed to execute")
-        }
+        // Small first batch for fast time-to-first-result, then larger batches.
+        let batching = MDQueryBatchingParams(
+            first_max_num: 64, first_max_ms: 50,
+            progress_max_num: 2048, progress_max_ms: 100,
+            update_max_num: 0, update_max_ms: 0)
+        MDQuerySetBatchingParameters(query, batching)
+        orderedRoots = roots.sorted { $0.canonical.count > $1.canonical.count }
 
-        let count = MDQueryGetResultCount(query)
-        var items: [MDItem] = []
-        items.reserveCapacity(count)
-        for i in 0..<count {
-            if let pointer = MDQueryGetResultAtIndex(query, i) {
-                items.append(Unmanaged<MDItem>.fromOpaque(pointer).takeUnretainedValue())
+        // Progress/finish notifications arrive on this thread's run loop; each batch
+        // is drained and streamed to `body` while the query keeps gathering.
+        let center = CFNotificationCenterGetLocalCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        let callback: CFNotificationCallback = { _, observer, name, _, _ in
+            guard let observer else { return }
+            let source = Unmanaged<MDQuerySource>.fromOpaque(observer).takeUnretainedValue()
+            source.handleNotification(name: name?.rawValue as String?)
+        }
+        for name in [kMDQueryProgressNotification!, kMDQueryDidFinishNotification!] {
+            CFNotificationCenterAddObserver(
+                center, observer, callback, name as CFString,
+                Unmanaged.passUnretained(query).toOpaque(),
+                .deliverImmediately)
+        }
+        defer { CFNotificationCenterRemoveEveryObserver(center, observer) }
+
+        try withoutActuallyEscaping(body) { escapableBody in
+            self.body = escapableBody
+            defer { self.body = nil }
+            guard MDQueryExecute(query, 0) else {
+                throw ParseError("Spotlight query failed to execute")
+            }
+            CFRunLoopRun()
+            if let failure {
+                self.failure = nil
+                throw failure
             }
         }
-        // Longest canonical prefix wins when roots overlap.
-        let orderedRoots = roots.sorted { $0.canonical.count > $1.canonical.count }
-        for path in Self.copyPaths(items) {
-            guard let path, seen.insert(path).inserted else { continue }
-            if let candidate = Self.map(path: path, roots: orderedRoots) {
-                result.append(candidate)
+        return delivered
+    }
+
+    private func handleNotification(name: String?) {
+        guard let query, let body else { return }
+        MDQueryDisableUpdates(query)
+        defer { MDQueryEnableUpdates(query) }
+
+        let total = MDQueryGetResultCount(query)
+        if total > processed, !stopped {
+            var items: [MDItem] = []
+            items.reserveCapacity(total - processed)
+            for i in processed..<total {
+                if let pointer = MDQueryGetResultAtIndex(query, i) {
+                    items.append(Unmanaged<MDItem>.fromOpaque(pointer).takeUnretainedValue())
+                }
+            }
+            processed = total
+            indexResultCount = total
+            for path in Self.copyPaths(items) {
+                guard let path, seen.insert(path).inserted else { continue }
+                guard let candidate = Self.map(path: path, roots: orderedRoots) else { continue }
+                delivered += 1
+                do {
+                    if try !body(candidate) {
+                        stopped = true
+                        break
+                    }
+                } catch {
+                    failure = error
+                    stopped = true
+                    break
+                }
             }
         }
-        return result
+        if stopped {
+            MDQueryStop(query)
+            CFRunLoopStop(CFRunLoopGetCurrent())
+            return
+        }
+        if name == (kMDQueryDidFinishNotification! as String) {
+            CFRunLoopStop(CFRunLoopGetCurrent())
+        }
+    }
+
+    /// Authoritative per-root probe: does the index hold ANYTHING under this root?
+    /// Used to explain empty results accurately even when heuristics (markers, hidden
+    /// dirs) would guess wrong in either direction.
+    public static func indexHasAnyEntry(under root: RootScope) -> Bool {
+        guard
+            let query = MDQueryCreate(
+                kCFAllocatorDefault, QueryPlan.matchAll as CFString, nil, nil)
+        else { return false }
+        MDQuerySetSearchScope(query, [root.absolute] as CFArray, 0)
+        MDQuerySetMaxCount(query, 1)
+        guard MDQueryExecute(query, CFOptionFlags(kMDQuerySynchronous.rawValue)) else {
+            return false
+        }
+        return MDQueryGetResultCount(query) > 0
     }
 
     /// kMDItemPath is computed on demand, never stored, so the batched
@@ -126,12 +227,14 @@ public struct MDQuerySource: CandidateSource {
         let chunkCount = (items.count + chunkSize - 1) / chunkSize
         var paths = [String?](repeating: nil, count: items.count)
         paths.withUnsafeMutableBufferPointer { buffer in
-            let base = buffer.baseAddress!
+            let base = UnsafeSendableBox(value: buffer.baseAddress!)
+            let boxedItems = UnsafeSendableBox(value: items)
             DispatchQueue.concurrentPerform(iterations: chunkCount) { chunk in
                 let lower = chunk * chunkSize
-                let upper = min(lower + chunkSize, items.count)
+                let upper = min(lower + chunkSize, boxedItems.value.count)
                 for i in lower..<upper {
-                    base[i] = MDItemCopyAttribute(items[i], kMDItemPath) as? String
+                    base.value[i] =
+                        MDItemCopyAttribute(boxedItems.value[i], kMDItemPath) as? String
                 }
             }
         }

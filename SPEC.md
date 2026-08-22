@@ -291,7 +291,14 @@ These are inherent to the index-backed design and are documented behavior, not b
 3. **Hidden-directory scopes** are reachable only when the root itself is the hidden
    directory, and only filename/owner/date metadata is queryable there; sfind restricts its
    query narrowing accordingly.
-4. `-ls` prints allocated blocks (`st_blocks`); on APFS (sparse/compressed files) this can
+4. **Streaming and memory.** The query runs asynchronously and results stream to the
+   post-filter (and stdout) in batches as the index delivers them, so output flows like
+   find's and a closed pipe (e.g. `| head`) terminates the search early. The MDQuery API
+   itself retains all gathered result references in the query object for the run's
+   duration, so peak memory still grows with the result count; sfind adds only the batch
+   being processed. `-s`, `-prune`, and `-delete` require the full set before acting and
+   therefore collect first.
+5. `-ls` prints allocated blocks (`st_blocks`); on APFS (sparse/compressed files) this can
    differ from classic HFS expectations — identical to real find, listed here only because
    parity tests must not conflate it with `-size` rounding.
 

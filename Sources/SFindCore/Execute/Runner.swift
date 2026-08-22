@@ -49,12 +49,10 @@ public final class Runner {
 
     public func run(source: CandidateSource) -> Int32 {
         let evaluator: Evaluator
-        let candidates: [Candidate]
         do {
             evaluator = try Evaluator(
                 command: command, environment: environment, sink: sink,
                 promptResponder: promptResponder)
-            candidates = try source.candidates()
         } catch {
             sink.diagnostic("\(error)")
             sink.flush()
@@ -73,39 +71,54 @@ public final class Runner {
                 return false
             }
 
-        var ordered = candidates
-        if command.options.sorted || pruneActive {
-            // Component-wise lexicographic order reproduces find -s (which sorts each
-            // directory during traversal, so a directory's contents come before its
-            // later siblings — plain string order differs at the '.' < '/' boundary).
-            // -prune also needs parents processed before descendants, which this
-            // order guarantees.
-            ordered = Runner.findSorted(ordered)
-        }
-        if hasDelete {
-            // Children before parents so rmdir succeeds.
-            ordered.sort { ($0.depth, $1.path) > ($1.depth, $0.path) }
-        }
-
-        var prunedPrefixes: [String] = []
-        for candidate in ordered {
-            if pruneActive,
-                prunedPrefixes.contains(where: { candidate.path.hasPrefix($0 + "/") })
-            {
-                continue
-            }
-            do {
-                let outcome = try evaluator.process(candidate)
-                if pruneActive, outcome.pruned, outcome.isDirectory {
-                    prunedPrefixes.append(candidate.path)
+        do {
+            if command.options.sorted || pruneActive || hasDelete {
+                // Ordering requires the full set: collect, order, evaluate.
+                var ordered = try source.collect()
+                if command.options.sorted || pruneActive {
+                    // Component-wise lexicographic order reproduces find -s (which
+                    // sorts each directory during traversal, so a directory's contents
+                    // come before its later siblings — plain string order differs at
+                    // the '.' < '/' boundary). -prune also needs parents processed
+                    // before descendants, which this order guarantees.
+                    ordered = Runner.findSorted(ordered)
                 }
-            } catch is QuitSignal {
-                break
-            } catch {
-                sink.diagnostic("\(error)")
-                sink.flush()
-                return 1
+                if hasDelete {
+                    // Children before parents so rmdir succeeds.
+                    ordered.sort { ($0.depth, $1.path) > ($1.depth, $0.path) }
+                }
+                var prunedPrefixes: [String] = []
+                loop: for candidate in ordered {
+                    if pruneActive,
+                        prunedPrefixes.contains(where: { candidate.path.hasPrefix($0 + "/") })
+                    {
+                        continue
+                    }
+                    do {
+                        let outcome = try evaluator.process(candidate)
+                        if pruneActive, outcome.pruned, outcome.isDirectory {
+                            prunedPrefixes.append(candidate.path)
+                        }
+                    } catch is QuitSignal {
+                        break loop
+                    }
+                }
+            } else {
+                // No ordering constraints: stream, so output flows as the index
+                // delivers batches; -quit stops the query early.
+                try source.forEachCandidate { candidate in
+                    do {
+                        try evaluator.process(candidate)
+                    } catch is QuitSignal {
+                        return false
+                    }
+                    return true
+                }
             }
+        } catch {
+            sink.diagnostic("\(error)")
+            sink.flush()
+            return 1
         }
         evaluator.finish()
         sink.flush()
