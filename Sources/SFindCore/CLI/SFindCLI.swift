@@ -6,7 +6,7 @@ import Foundation
 public enum SFindCLI {
     static let usage =
         "usage: sfind [-H | -L | -P] [-EXdsx] [-f path] [--walk[=MODE]] [--progress] "
-        + "path ... [--expr string] [expression]"
+        + "[--debug] path ... [--expr string] [expression]"
 
     public static func run(arguments: [String], sink: OutputSink) -> Int32 {
         switch arguments.first {
@@ -58,6 +58,36 @@ public enum SFindCLI {
             return 1
         }
         let walk = command.options.walk
+        let debug = command.options.debug ? DebugLog(sink: sink) : nil
+        if let debug {
+            for root in roots {
+                var line = "root '\(root.typed)': \(root.absolute)"
+                if root.canonical != root.absolute { line += " (canonical \(root.canonical))" }
+                if let device = root.device { line += ", device \(device)" }
+                if root.isHidden {
+                    line += "; a hidden directory (reduced index tier: names, owners, dates only)"
+                } else if root.isInsideHiddenDirectory {
+                    line += "; inside a hidden directory (index scoping unreliable)"
+                }
+                if let marker = root.exclusionMarkerDirectory {
+                    line += "; excluded from the index by \(display(marker, like: root))"
+                }
+                debug.log(line)
+            }
+            debug.log(
+                "planned spotlight query: "
+                    + (plan.queryString ?? "none (the expression cannot match indexed files)"))
+            if plan.isMatchAll {
+                debug.log("the query narrows nothing: the index returns the whole scope")
+            }
+            if !plan.postFilterOnly.isEmpty {
+                debug.log("post-filter only: \(plan.postFilterOnly.joined(separator: ", "))")
+            }
+            if !plan.anchors.isEmpty {
+                debug.log("path anchors: \(DebugLog.list(plan.anchors.map(\.name)))")
+            }
+            debug.log("walk mode: \(walk.rawValue)")
+        }
         // Predicate-level warnings: only for expression terms that provably require
         // files Spotlight cannot return (-type l, -lname, dot-name patterns). A walk
         // covers exactly those files, so they are moot then.
@@ -83,8 +113,13 @@ public enum SFindCLI {
             let reporter = Progress.standardError()
             progress = reporter
             (sink as? FileHandleSink)?.beforeWrite = { reporter.clearLine() }
+        } else if debug != nil {
+            // Counters only, for the final debug summary.
+            progress = Progress.silent()
         }
-        defer { progress?.finish() }
+        defer {
+            if command.options.progress { progress?.finish() }
+        }
 
         // -content terms the main query cannot vouch for (under a negation or
         // disjunction, or in the reduced tier) get their own membership sets. So does
@@ -101,15 +136,33 @@ public enum SFindCLI {
                 let query = Planner.contentQuery(words)
                 let paths = MDQuerySource.synchronousCandidates(query: query, roots: roots)
                 content.membership[words] = Set(paths.map(\.candidate.path))
+                debug?.log(
+                    "content term '\(words)': \(query) → "
+                        + "\(DebugLog.count(paths.count, "indexed file"))")
+            }
+            for words in plan.contentSatisfiedByIndex where !walk.walks {
+                debug?.log(
+                    "content term '\(words)': a conjunct of the query; true for every "
+                        + "index result")
             }
         }
 
         let source = HybridSource(
-            command: command, plan: plan, roots: roots, sink: sink, progress: progress)
+            command: command, plan: plan, roots: roots, sink: sink, progress: progress,
+            debug: debug)
         let runner = Runner(
             command: command, environment: environment, sink: sink, content: content,
             progress: progress)
         let status = runner.run(source: source)
+        if let debug, let counters = progress?.counters {
+            debug.log(
+                "post-filter: \(DebugLog.count(counters.query + counters.walk, "candidate")) "
+                    + "(\(Progress.group(counters.query)) from the index, "
+                    + "\(Progress.group(counters.walk)) from the walk or seeded as roots); "
+                    + "\(Progress.group(counters.filtered)) rejected, "
+                    + "\(Progress.group(counters.matched)) matched; "
+                    + "exit status \(sawError ? 1 : status); \(debug.elapsed()) total")
+        }
 
         // Scope diagnostics are deferred: when the index returned nothing, ask it the
         // authoritative question per root — "is ANYTHING under this root indexed?" —
@@ -221,6 +274,12 @@ public enum SFindCLI {
           --progress     show a progress line on stderr: an estimate of the work left
                          plus candidates from the query, from the walk, filtered out,
                          and matched
+          --debug        explain on stderr where the search looks and what it finds:
+                         each root's index status, the Spotlight query and scope and
+                         how many items it returned, the walk phases with what they
+                         scanned and yielded (and which subtrees were treated as
+                         unindexed), and the post-filter totals — for tracing an
+                         unexpected or empty result to its cause
           --help, -?     this help
           --version      version
 

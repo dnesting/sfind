@@ -68,6 +68,12 @@ public final class Progress {
             terminal: isatty(fd) == 1, width: columns)
     }
 
+    /// A reporter that renders nothing but still accumulates counters (for --debug's
+    /// final summary without --progress).
+    public static func silent() -> Progress {
+        Progress(write: { _ in }, terminal: false)
+    }
+
     /// Names the current phase; `fraction` is nil when its extent is unknown.
     public func setPhase(_ label: String, fraction: Double?) {
         phase = label

@@ -14,7 +14,8 @@ import Foundation
 ///    names a literal component and either a walk follows or the query would
 ///    otherwise return the whole scope.
 /// 3. **Gap walk** (walk modes): the same roots, yielding only what the index does
-///    not hold; roots the index has nothing for are walked exhaustively instead.
+///    not hold (guided by the index's own folder list); roots the index has nothing
+///    for are walked exhaustively instead.
 public final class HybridSource: CandidateSource {
     /// Candidates the exhaustive prefix may deliver before deferring to the index.
     public static let exhaustiveBudget = 8192
@@ -36,16 +37,19 @@ public final class HybridSource: CandidateSource {
 
     private let sink: OutputSink
     private let progress: Progress?
+    private let debug: DebugLog?
+    private var gapSubtreesLogged = 0
 
     public init(
         command: ParsedCommand, plan: QueryPlan, roots: [RootScope], sink: OutputSink,
-        progress: Progress? = nil
+        progress: Progress? = nil, debug: DebugLog? = nil
     ) {
         self.command = command
         self.plan = plan
         self.roots = roots
         self.sink = sink
         self.progress = progress
+        self.debug = debug
     }
 
     @discardableResult
@@ -73,8 +77,32 @@ public final class HybridSource: CandidateSource {
             }
             let walker = makeWalker(
                 roots: roots.map { WalkRoot(scope: $0, exhaustive: true) }, options: options)
+            let started = Date()
+            if mode.usesIndex {
+                debug?.log(
+                    "walk mode \(mode.rawValue): exhaustive walk of "
+                        + "\(DebugLog.count(roots.count, "root")) first, budget "
+                        + "\(HybridSource.exhaustiveBudget) candidates or "
+                        + "\(Int(HybridSource.exhaustiveTimeBudget * 1000)) ms")
+            } else {
+                debug?.log(
+                    "walk mode only: plain walk of \(DebugLog.count(roots.count, "root")), "
+                        + "the index is not consulted")
+            }
             progress?.setPhase("walking", fraction: 0)
             let outcome = try walker.run(deliver)
+            if let debug {
+                let verdict: String
+                switch outcome {
+                case .completed: verdict = "scope exhausted, index not needed"
+                case .limitReached: verdict = "budget reached, continuing with the index"
+                case .stopped: verdict = "stopped early (-quit or closed output)"
+                }
+                debug.log(
+                    "exhaustive walk: scanned \(DebugLog.count(walker.scanned, "entry", "entries")), "
+                        + "yielded \(DebugLog.count(walker.yielded, "candidate")) in "
+                        + "\(debug.elapsed(since: started)); \(verdict)")
+            }
             if outcome != .limitReached { return delivered }
             skip = walker.emitted
         }
@@ -87,11 +115,18 @@ public final class HybridSource: CandidateSource {
         if mode.walks {
             indexedRoots = []
             for root in roots {
-                if root.exclusionMarkerDirectory != nil
-                    || !MDQuerySource.indexHasAnyEntry(under: root)
-                {
+                if let marker = root.exclusionMarkerDirectory {
+                    debug?.log(
+                        "root '\(root.typed)': excluded from the index (\(marker) carries a "
+                            + ".metadata_never_index marker or .noindex name); walked exhaustively")
+                    unindexedRoots.append(root)
+                } else if !MDQuerySource.indexHasAnyEntry(under: root) {
+                    debug?.log(
+                        "root '\(root.typed)': the index holds nothing under it; "
+                            + "walked exhaustively")
                     unindexedRoots.append(root)
                 } else {
+                    debug?.log("root '\(root.typed)': indexed (probe found entries)")
                     indexedRoots.append(root)
                 }
             }
@@ -105,13 +140,43 @@ public final class HybridSource: CandidateSource {
                 !roots.contains { anchor.isSatisfied(byRootTyped: $0.typed) }
             })
         {
-            queryRoots = HybridSource.refine(indexedRoots, by: anchor)
+            let started = Date()
+            let (query, refined) = HybridSource.refine(indexedRoots, by: anchor)
+            queryRoots = refined
+            debug?.log(
+                "path anchor '\(anchor.name)': \(query) over "
+                    + "\(DebugLog.count(indexedRoots.count, "root")) → "
+                    + "\(DebugLog.count(refined.count, "directory", "directories")) "
+                    + "in \(debug?.elapsed(since: started) ?? "")"
+                    + (refined.isEmpty
+                        ? "; nothing under these roots can match"
+                        : ": " + DebugLog.list(refined.map(\.typed))))
+        } else if let debug, !plan.anchors.isEmpty {
+            let names = plan.anchors.map(\.name)
+            if plan.anchors.allSatisfy({ anchor in
+                roots.contains { anchor.isSatisfied(byRootTyped: $0.typed) }
+            }) {
+                debug.log(
+                    "path anchor(s) \(DebugLog.list(names)) already satisfied by a root; "
+                        + "not used")
+            } else if !mode.walks, !plan.isMatchAll {
+                debug.log(
+                    "path anchor(s) \(DebugLog.list(names)) not used: the query already "
+                        + "narrows, and no walk follows")
+            }
         }
         indexRoots = queryRoots
 
         // Phase 2: the index.
         if !queryRoots.isEmpty {
             usedIndex = true
+            let started = Date()
+            let before = delivered
+            debug?.log(
+                "spotlight query: \(plan.queryString ?? "none (the expression cannot match indexed files; only the roots are seeded)")"
+            )
+            debug?.log(
+                "spotlight scope: \(DebugLog.list(queryRoots.map(\.absolute)))")
             progress?.setPhase("querying index", fraction: nil)
             let source = MDQuerySource(queryString: plan.queryString, roots: queryRoots, skip: skip)
             if let progress {
@@ -120,7 +185,22 @@ public final class HybridSource: CandidateSource {
                 _ = try source.forEachCandidate(deliver)
             }
             indexResultCount = source.indexResultCount
+            if let debug {
+                var summary =
+                    "spotlight results: \(DebugLog.count(indexResultCount, "item")) returned, "
+                    + "\(DebugLog.count(delivered - before, "candidate")) delivered to the "
+                    + "post-filter in \(debug.elapsed(since: started))"
+                if !skip.isEmpty {
+                    summary += " (paths the exhaustive walk already delivered are skipped)"
+                }
+                if indexResultCount == 0 {
+                    summary += "; the index has nothing matching the query under this scope"
+                }
+                debug.log(summary)
+            }
             if stopped { return delivered }
+        } else if plan.queryString != nil {
+            debug?.log("spotlight query skipped: no root for the index to search")
         }
 
         // Phase 3: the gap walk (and exhaustive walks of uncovered roots).
@@ -136,13 +216,33 @@ public final class HybridSource: CandidateSource {
                 // covers below these roots; directories missing from it are walked
                 // exhaustively. (Content type is not queryable in the reduced tier.)
                 progress?.setPhase("listing indexed folders", fraction: nil)
+                let started = Date()
                 let folders = MDQuerySource.synchronousCandidates(
                     query: "kMDItemContentTypeTree == \"public.folder\"", roots: queryRoots)
                 options.indexedDirectories = Set(folders.map(\.candidate.path))
+                debug?.log(
+                    "indexed folder list: \(DebugLog.count(folders.count, "directory", "directories")) "
+                        + "under the scope in \(debug?.elapsed(since: started) ?? ""); "
+                        + "directories missing from it are walked exhaustively")
+            } else if !queryRoots.isEmpty {
+                debug?.log(
+                    "indexed folder list skipped: a root is a hidden directory "
+                        + "(content type is not queryable there)")
             }
             let walker = makeWalker(roots: walkRoots, options: options)
+            let started = Date()
+            debug?.log(
+                "gap walk: \(DebugLog.count(queryRoots.count, "indexed root")) "
+                    + "(only unindexed entries are yielded) and "
+                    + "\(DebugLog.count(unindexedRoots.count, "unindexed root")) (yielded in full)")
             progress?.setPhase("walking", fraction: 0)
-            try walker.run(deliver)
+            let outcome = try walker.run(deliver)
+            debug?.log(
+                "gap walk: scanned \(DebugLog.count(walker.scanned, "entry", "entries")), "
+                    + "yielded \(DebugLog.count(walker.yielded, "candidate")), entered "
+                    + "\(DebugLog.count(walker.gapSubtrees, "gap subtree")) in "
+                    + "\(debug?.elapsed(since: started) ?? "")"
+                    + (outcome == .stopped ? "; stopped early" : ""))
         }
         return delivered
     }
@@ -160,13 +260,26 @@ public final class HybridSource: CandidateSource {
         let walker = Walker(roots: roots, options: options, progress: progress)
         walker.shouldDescend = shouldDescend
         walker.diagnostic = { [sink] message in sink.diagnostic(message) }
+        if let debug {
+            walker.onGapSubtree = { [weak self] path, reason in
+                guard let self else { return }
+                self.gapSubtreesLogged += 1
+                if self.gapSubtreesLogged <= 25 {
+                    debug.log("gap subtree: \(path) (\(reason))")
+                } else if self.gapSubtreesLogged == 26 {
+                    debug.log("further gap subtrees are not listed")
+                }
+            }
+        }
         return walker
     }
 
     /// The anchor directories under `roots` according to the index, as roots of their
     /// own (nested ones collapsed into their ancestors). An empty result means the
     /// index knows no such directory, so nothing under these roots can match.
-    static func refine(_ roots: [RootScope], by anchor: PathAnchor) -> [RootScope] {
+    static func refine(_ roots: [RootScope], by anchor: PathAnchor) -> (
+        query: String, roots: [RootScope]
+    ) {
         let escaped = anchor.name.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         var query = "kMDItemFSName == \"\(escaped)\"\(anchor.caseInsensitive ? "c" : "")"
@@ -194,6 +307,6 @@ public final class HybridSource: CandidateSource {
                     typed: candidate.path, absolute: raw, canonical: canonical,
                     device: candidate.rootDevice, depthOffset: candidate.depth))
         }
-        return refined
+        return (query, refined)
     }
 }

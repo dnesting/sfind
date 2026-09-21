@@ -11,6 +11,7 @@
 .Op Fl f Ar path
 .Op Fl -walk Ns Op = Ns Ar mode
 .Op Fl -progress
+.Op Fl -debug
 .Ar path ...
 .Op Fl -expr Ar string
 .Op Ar expression
@@ -162,6 +163,16 @@ the current phase, and counters: candidates from the index query, candidates
 from the walk, entries the walk scanned, candidates the post-filter rejected,
 matches, and elapsed time.
 A summary line is printed at the end.
+.It Fl -debug
+Explain on standard error, as
+.Ql sfind: debug\&:
+lines, where the search looks and what each stage produced: every root's
+absolute path, device, and index status; the planned Spotlight query and the
+terms it cannot express; the walk phases with the entries they scanned, the
+candidates they yielded, and the subtrees they treated as unindexed (and why);
+the Spotlight scope, the number of items the index returned, and the number of
+candidates handed to the post-filter; and the post-filter totals.
+Use it to trace an unexpected or empty result to its cause.
 .It Fl -help , Fl \&?
 Print usage and a summary.
 .It Fl -version

@@ -39,6 +39,7 @@ the index's startup cost.
 sfind ~ --walk -name '*.env'              # dotfiles included; the index still narrows
 sfind ~ --walk --progress -type l         # symlinks (never indexed), with a status line
 sfind ~/Documents -content invoice        # sfind extension: Spotlight full-text search
+sfind ~/Projects --debug -name '*.env'    # explain where it looked and what it saw
 ```
 
 `--walk=only` never consults the index (equivalent to `find`), for when the index is stale

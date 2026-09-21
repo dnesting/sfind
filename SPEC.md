@@ -122,6 +122,18 @@ argument ends option parsing.
   candidates received from the query, candidates produced by the walk, entries the walk
   scanned, candidates the post-filter rejected (`filtered`), matches, and elapsed time.
   Ends with a final summary line.
+- [x] `--debug` — explain on stderr (as `sfind: debug: …` lines) where the search looks and
+  what each stage produced, so an unexpected or empty result can be traced to its cause:
+  each root's absolute/canonical path, device, and index status (hidden, inside a hidden
+  directory, or excluded by a marker); the planned Spotlight query, whether it narrows at
+  all, the post-filter-only terms, path anchors, and the walk mode; per `-content` term,
+  its query and how many indexed files it matched; each walk phase's roots, budget, entries
+  scanned, candidates yielded, and outcome; per-root probe results under `--walk`; the
+  anchor query and the directories it refined the scope to; the Spotlight query, scope,
+  items returned, and candidates delivered; the indexed folder list size; the first 25 gap
+  subtrees entered with the reason (hidden, not in the folder list, `.noindex`, marker,
+  package contents); and the post-filter totals (candidates by source, rejected, matched,
+  exit status, elapsed time). Combines with `--progress`.
 - [x] `--help` / `-?` — usage and option summary. `--version` — version. (Recognized as
   the first argument.)
 

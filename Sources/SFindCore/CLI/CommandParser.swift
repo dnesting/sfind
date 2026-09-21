@@ -132,6 +132,8 @@ public struct CommandParser {
             options.translateOnly = true
         case "--progress":
             options.progress = true
+        case "--debug":
+            options.debug = true
         case "--walk":
             options.walk = .gaps
         default:

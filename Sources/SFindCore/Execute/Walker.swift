@@ -56,11 +56,18 @@ public final class Walker {
     public var shouldDescend: ((Candidate) -> Bool)?
     /// Receives traversal errors (unreadable directories), find-style.
     public var diagnostic: ((String) -> Void)?
+    /// Called when a non-exhaustive walk enters a subtree it will yield in full,
+    /// with the directory and the reason (--debug).
+    public var onGapSubtree: ((String, String) -> Void)?
     public private(set) var sawError = false
+    /// Directories that started a gap subtree.
+    public private(set) var gapSubtrees = 0
     /// Candidate paths yielded so far, tracked only when a limit or time limit is set
     /// so a later phase can skip them.
     public private(set) var emitted = Set<String>()
     public private(set) var yielded = 0
+    /// Directory entries read so far.
+    public private(set) var scanned = 0
 
     private let roots: [WalkRoot]
     private let options: WalkOptions
@@ -152,6 +159,7 @@ public final class Walker {
                 }
                 let entry = frame.entries[frame.index]
                 frame.index += 1
+                scanned += 1
                 progress?.counters.scanned += 1
                 stack.append(frame)
                 progress?.setFraction(rootProgress + Walker.fraction(of: stack))
@@ -241,11 +249,25 @@ public final class Walker {
                     if let deferred, try !yield(deferred, body) { return .stopped }
                     continue
                 }
-                let emitAll =
-                    frame.emitAll || isDot || unindexedDirectory
-                    || entry.name.hasSuffix(".noindex")
-                    || Walker.isGapSubtree(entries: entries)
-                    || (entry.name.contains(".") && Walker.isPackage(path))
+                var gapReason: String?
+                if !frame.emitAll {
+                    if isDot {
+                        gapReason = "hidden directory"
+                    } else if unindexedDirectory {
+                        gapReason = "not in the index's folder list"
+                    } else if entry.name.hasSuffix(".noindex") {
+                        gapReason = ".noindex directory"
+                    } else if Walker.isGapSubtree(entries: entries) {
+                        gapReason = "carries .metadata_never_index"
+                    } else if entry.name.contains("."), Walker.isPackage(path) {
+                        gapReason = "package contents"
+                    }
+                    if let gapReason {
+                        gapSubtrees += 1
+                        onGapSubtree?(path, gapReason)
+                    }
+                }
+                let emitAll = frame.emitAll || gapReason != nil
                 stack.append(
                     Frame(
                         path: path, depth: depth, entries: entries, emitAll: emitAll,

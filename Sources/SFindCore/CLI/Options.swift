@@ -40,6 +40,9 @@ public struct FindOptions: Equatable, Sendable {
     public var walk: WalkMode = .off
     /// --progress: render a progress line on standard error.
     public var progress = false
+    /// --debug: explain on standard error where the search looks (roots, query,
+    /// scope, walk phases) and what each stage produced.
+    public var debug = false
 
     public init() {}
 }
