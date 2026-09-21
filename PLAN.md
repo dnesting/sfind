@@ -19,13 +19,18 @@ Spotlight index on macOS 26.5 (find man page dated December 2023).
    (alias of BSD `+mode`), `-printf`, `-regextype`, `-readable`/`-writable`/`-executable`,
    `-daystart`. `-regex`/`-iregex` default to BSD BRE (ERE with `-E`); GNU `-regextype` is the
    explicit opt-in to other dialects. SPEC.md documents every BSD/GNU divergence per option.
-2. **Coverage gap policy**: index-only. No filesystem-walk fallback in v1 (`--walk PATH` and
-   conjunct-narrowed walking are SPEC.md "future work"). Two gap types, handled differently:
+2. **Coverage gap policy**: index-first; a walk only on request. Two gap types, handled
+   differently:
    - *Attributes Spotlight doesn't index* → always-on `lstat`-based post-filtering of
      candidates.
    - *Files Spotlight can't see* (dotfiles, symlinks, bundle contents, excluded/unindexed
-     paths) → stderr **warnings**, both predicate-level (expression provably needs invisible
-     files) and scope-level (search root appears unindexed).
+     paths) → by default, stderr **warnings**, both predicate-level (expression provably
+     needs invisible files) and scope-level (search root turns out to be unindexed). With
+     `--walk` (mode `gaps`) a filesystem walk restricted to exactly those files supplements
+     the index, so the index still does the bulk of the work; `--walk=only` replaces the
+     index with a plain walk. The default stays index-only so that sfind's speed profile is
+     predictable and the user chooses between "query Spotlight" and "find something".
+     See [Walk architecture](#walk-architecture).
 3. **Actions**: full set, sequenced: `-print`/`-print0` → `-ls` → `-exec`/`-execdir`/`-ok`/
    `-okdir` → `-delete` (extra safety tests).
 4. **Releases**: tag push → universal (arm64+x86_64) tarball; ad-hoc signed now, Developer ID
@@ -44,11 +49,14 @@ Spotlight.
 Pipeline:
 
 ```
-argv → OptionParser → Options + Expression AST
-    → Planner → Plan { mdqueryString, scopes, globals(maxdepth/mindepth/xdev/…), warnings }
-    → CandidateSource (MDQuerySource | ArraySource for tests) → candidate paths
-    → PostFilter (parallel, batched lstat + full AST evaluation) → matches
+argv → CommandParser → Options + Globals(maxdepth/mindepth/xdev/…) + Expression AST
+    → Planner → Plan { mdqueryString, warnings, anchors, content terms }
+    → CandidateSource → candidate paths
+        HybridSource in production: budgeted walk | MDQuerySource | gap walk (--walk),
+        with anchor-refined roots; ArraySource for tests
+    → PostFilter (Evaluator: lstat + full AST evaluation, -content membership) → matches
     → Actions (-print/-ls/-exec/-delete…) with find-compatible exit status
+    → Progress (--progress) observes every stage on stderr
 ```
 
 - SwiftPM package, swift-tools-version 6.0, platform macOS 13+. Targets: executable `sfind`
@@ -56,10 +64,12 @@ argv → OptionParser → Options + Expression AST
   parameterized `arguments:` — ideal for per-option tables).
 - **Custom argv parser** (find's grammar isn't flag-shaped; no swift-argument-parser).
   getopt-style option phase (`-H -L -P -E -X -d -s -x -f path`, bundling, first non-option
-  ends options), then paths, then expression tokens.
-- `CandidateSource` protocol is the testability seam: `MDQuerySource` in production;
-  `ArraySource` lets parity tests feed a walked file list through the identical filter+action
-  machinery with no index involved.
+  ends options), then paths, then expression tokens. sfind's `--*` flags (`--mdfind`,
+  `--walk[=MODE]`, `--progress`) are position-independent: accepted in the option phase and
+  among expression tokens.
+- `CandidateSource` protocol is the testability seam: `HybridSource` (wrapping
+  `MDQuerySource` and `Walker`) in production; `ArraySource` lets parity tests feed a
+  walked file list through the identical filter+action machinery with no index involved.
 
 ### Planner rules (from verified Spotlight probes)
 
@@ -121,12 +131,108 @@ directory→`kMDItemContentTypeTree == "public.folder"`.
   `/private/var/...` (verified). Re-map each result onto the user's literal root argument
   (compute the relative path against `realpath(root)`, re-prefix with the root as typed) so
   output matches find's (`./foo` style for relative roots).
-- **Scope-level warning probe**: per root, check for `.metadata_never_index` / `*.noindex`
-  ancestors and compare a shallow `readdir` sample against index membership; warn "root
-  appears unindexed; results may be empty or incomplete".
+- **Scope-level warning probe**: deferred until the index returned nothing, then per root
+  an authoritative synchronous match-all query with `MDQuerySetMaxCount(1)`
+  (`MDQuerySource.indexHasAnyEntry`) decides whether anything under the root is indexed;
+  the warning names the likely cause (a `.metadata_never_index` / `*.noindex` ancestor,
+  found by an O(path-depth) stat walk, or a hidden ancestor directory). The same probe
+  tells `--walk` which roots to walk exhaustively.
 - Known index gaps (document in SPEC.md): dotfiles are never returned; symlinks and
   app-bundle contents are absent entirely; `/usr /bin /etc /tmp` are empty; `$TMPDIR` is
   reduced-tier. Verified index coverage of a real home directory was ~3% of inodes.
+
+### Walk architecture
+
+`--walk` never replaces the index unasked; it fills in what the index cannot hold, so the
+combination stays faster than a plain `find`. `WalkMode` (`Options.swift`): `off`
+(default; no directory is ever read), `gaps` (bare `--walk`), `only` (plain walk, index
+never consulted — find-equivalent).
+
+- **`HybridSource`** (`Execute/HybridSource.swift`) is the production `CandidateSource`,
+  sequencing phases that each stream candidates to the post-filter:
+  1. *Exhaustive prefix* (walk modes): a plain walk of the roots under
+     `exhaustiveBudget` (8192 candidates) / `exhaustiveTimeBudget` (150 ms; cold caches
+     make counts a poor proxy for time). Small scopes finish here and never pay MDQuery's
+     ~200 ms IPC floor. Under `only` there is no budget and this is the whole run. If the
+     budget is hit, the paths already delivered go into a `skip` set honored by every later
+     phase.
+  2. *Root coverage* (walk modes): per root, `indexHasAnyEntry` — roots with an exclusion
+     marker ancestor or nothing indexed are set aside for an exhaustive walk.
+  3. *Anchor refinement*: when the plan carries a `PathAnchor` no root's own path already
+     satisfies, and either a walk is enabled or the plan is match-all, a synchronous
+     `kMDItemFSName == "<anchor>"` (`&& public.folder` outside the reduced tier) query
+     finds the anchor directories under the covered roots; they become the roots for the
+     remaining phases (nested ones collapsed; `depthOffset` keeps `-maxdepth`/`-mindepth`
+     relative to the typed root). No anchor directory known to the index → nothing to
+     search.
+  4. *Index* (unless `only`): `MDQuerySource` over the (refined) covered roots, exactly as
+     without `--walk`.
+  5. *Indexed folder list* (walk modes): one synchronous
+     `kMDItemContentTypeTree == "public.folder"` query over the covered roots yields
+     `WalkOptions.indexedDirectories`, the authoritative map of what the index covers
+     below them (skipped when a root is hidden — the reduced tier does not serve content
+     type). Measured: ~25k folders under a home directory in about 1–2 s, far less than
+     stat-ing the millions of entries a plain find visits.
+  6. *Gap walk* (walk modes): `Walker` over the same roots in non-exhaustive mode, plus
+     the set-aside roots exhaustively.
+- **`Walker`** (`Execute/Walker.swift`): `readdir(3)`-driven pre-order traversal
+  (post-order under `-d`) using `d_type`, so non-gap regular files cost no `lstat` — the
+  source of the speed advantage over find, which stats every entry. Gap classification per
+  entry: name starts with a dot; type is anything but regular file or directory (symlinks,
+  FIFOs, sockets, devices, whiteouts); a directory absent from
+  `WalkOptions.indexedDirectories` when that set is provided (yielded itself, and its
+  subtree walked exhaustively — the detector for exclusions the name rules cannot see:
+  Spotlight privacy entries, unindexed volumes mounted below the root, system policy such
+  as most of `~/Library`); or the entry lies under a gap subtree — a dot directory, such
+  an unindexed directory, a `*.noindex` directory, a directory whose listing contains
+  `.metadata_never_index`, or a package (bundle) directory (checked via the URL
+  `isPackage` resource value, only for directory names containing a dot). Everything else
+  is left to the index. Honors `-maxdepth` (never reads deeper directories), `-x`
+  (`st_dev` against the root's), `-H`/`-L`/`-P` (under `-L`, `(dev, ino)` of every frame on
+  the stack detects cycles: reported find-style as "Filesystem loop detected", not
+  descended), and an optional `shouldDescend` callback that `Runner` wires to
+  `Evaluator.wouldPrune` — a side-effect-free evaluation (actions inert and true) that is
+  exact when the expression has no `-exec` family primary, so pruned subtrees are never
+  read; with `-exec` present the walk descends and the existing `-prune` post-processing
+  excludes the contents. Unreadable directories are diagnostics + exit 1, as in find.
+- **`PathAnchor`** (`Planner/PathAnchor.swift`): from each top-level positive
+  `-path`/`-ipath`/`-regex`/`-iregex` conjunct, every `/run/` whose run is non-empty and
+  free of metacharacters (`*?[]\` for fnmatch; `.*?+^$\[]` for regex), appearing before
+  any `[` or `\` (a bracket expression or escape could swallow a slash), and for regex not
+  followed by a quantifier (`*?+`, which would make the closing slash optional). Regex
+  patterns containing `(){}|` yield nothing (a group could be optional). `-i` forms give
+  case-insensitive anchors. An anchor already present as a component of a root's typed
+  path cannot narrow that scope and is skipped.
+- **`-content` membership**: the planner emits `kMDItemTextContent == "word"cd` per
+  whitespace-separated word (verified: bare words match whole words; `*` widens; phrases
+  do not match as a unit). In index-only mode, terms that are top-level conjuncts of a
+  non-reduced-tier query are `contentSatisfiedByIndex`: the evaluator answers them with
+  `Candidate.fromIndex`. Every other term (under `!`/`-o`, or reduced tier) is
+  `contentNeedingMembership`: `SFindCLI` runs one synchronous `contentQuery` per term over
+  the typed roots before the search and hands the path sets to
+  `Evaluator.ContentResolution`. Under `--walk` every term takes the membership route — a
+  small scope can finish inside the exhaustive prefix without any index query, and walked
+  candidates carry no index evidence. Files the index does not hold never satisfy
+  `-content`; `--walk=only` warns that it matches nothing.
+- **`Progress`** (`Execute/Progress.swift`): main-thread, like the pipeline. On a
+  terminal the line is redrawn in place at most every 100 ms and
+  `FileHandleSink.beforeWrite` clears it before any other output; otherwise a `sfind: …`
+  line is emitted about once a second. Phases are labeled `walking`, `querying index`,
+  and `listing indexed folders`. Walk phases report a hierarchical fraction from the
+  traversal position (each frame contributes its consumed entries weighted by the product
+  of `1/count` up the stack — every directory assumed to hold equal work; monotonic, best
+  effort). The index phases have no known total and show an indeterminate `<=>` marker,
+  kept animating by a `CFRunLoopTimer` while `MDQuerySource` sits in `CFRunLoopRun`.
+  Counters: `query`, `walk`, `scanned`, `filtered`, `matched`, plus elapsed seconds;
+  `finish()` replaces the bar with a summary line.
+- **Warning policy under a walk**: predicate-level warnings are suppressed (the gap walk
+  yields exactly those files); the root-not-indexed diagnostic is not emitted (uncovered
+  roots are walked instead).
+- **Known limits** (SPEC.md divergences 6–7): an individual regular file the index lacks
+  inside a directory it does hold (a stale index) is missed in `gaps` mode —
+  `--walk=only` is the escape hatch; a hidden root is treated as covered for its non-dot
+  contents and gets no folder list; anchor directories inside hidden or excluded trees
+  are invisible to the index and therefore not walked.
 
 ### find behavioral subtleties the implementation and tests MUST honor (all verified)
 
@@ -163,34 +269,40 @@ directory→`kMDItemContentTypeTree == "public.folder"`.
 ## Repo layout
 
 ```
-Package.swift            LICENSE   SPEC.md   PLAN.md   README.md
+Package.swift            LICENSE   SPEC.md   PLAN.md   README.md   docs/sfind.1
 .swift-format            Makefile
 Sources/sfind/main.swift
 Sources/SFindCore/
-  CLI/Options.swift  CLI/OptionParser.swift
-  Expression/AST.swift  Expression/ExpressionParser.swift
-  Planner/Planner.swift  Planner/QueryBuilder.swift  Planner/Warnings.swift
-  Execute/CandidateSource.swift  Execute/MDQuerySource.swift  Execute/PathNormalizer.swift
-  Execute/PostFilter.swift  Execute/FileInfo.swift (lstat wrapper)
-  Execute/Glob.swift (fnmatch)  Execute/PosixRegex.swift (regcomp)
-  Actions/Print.swift  Actions/Ls.swift  Actions/Exec.swift  Actions/Delete.swift
-  Actions/Printf.swift
+  Version.swift
+  CLI/Options.swift (FindOptions, WalkMode, Globals)  CLI/CommandParser.swift
+  CLI/SFindCLI.swift (pipeline driver, warning policy, --help, --mdfind)
+  Expression/AST.swift  Expression/ArgParsing.swift  Expression/ExprTokenizer.swift (--expr)
+  Planner/Planner.swift (MDQuery translation, anchors, -content terms)
+  Planner/PathAnchor.swift  Planner/Warnings.swift  Planner/DateParser.swift
+  Execute/CandidateSource.swift (protocol, Candidate, RootScope, ArraySource)
+  Execute/MDQuerySource.swift (async streaming query, synchronous probes, path mapping)
+  Execute/HybridSource.swift (--walk phases, anchor refinement)
+  Execute/Walker.swift (readdir traversal, gap classification)
+  Execute/Progress.swift (--progress)
+  Execute/Runner.swift (ordering, -prune/-delete post-processing, exit status)
+  Execute/Evaluator.swift (post-filter + actions)  Execute/FileInfo.swift (lstat wrapper)
+  Execute/PosixRegex.swift (regcomp)  Execute/OutputSink.swift
+  Actions/Ls.swift  Actions/Exec.swift  Actions/Printf.swift
 Tests/SFindCoreTests/
-  OptionParserTests.swift  ExpressionParserTests.swift
-  Planner/  NameTests SizeTests TimeTests TypeTests PermTests PathTests OwnerTests
-            OperatorTests GlobalsTests WarningTests
+  OptionParserTests.swift  ExpressionParserTests.swift  ExprTokenizerTests.swift
+  Parsing/   per-option argument-shape tests (Name/Path/Type, Size, Time, Newer, Exec, …)
+  Planner/   per-option query-string tests (Name, Time, Size/Type/Owner, Combination,
+             PathAnchor)
   PostFilter/ (same per-option split, against real temp files via lstat — no Spotlight)
-  Actions/  PrintTests LsTests ExecTests DeleteTests PrintfTests
+  Actions/  CLI/
 Tests/ParityTests/       # find-oracle tests via ArraySource (walk-fed; run anywhere incl. tmp)
-  FixtureBuilder.swift   # builds a tree: sizes, touch -t times, perms, symlinks, dotfiles,
-                         # glob-hostile names
-  ParityRunner.swift     # runs /usr/bin/find vs the sfind machinery, compares sorted output,
-                         # with expected-divergence annotations
-  ParityCases.swift      # table of (expression, notes) per SPEC.md entry
+  ParitySupport.swift    # builds a tree: sizes, touch -t times, perms, symlinks, dotfiles,
+                         # glob-hostile names; runs /usr/bin/find vs the sfind machinery
+  ParityHarnessTests.swift  ParityCases.swift  # table of (expression, notes) per SPEC entry
 Tests/IntegrationTests/  # real Spotlight index; gated by SFIND_INTEGRATION=1 + canary
-  SpotlightCanary.swift  # fixture under $HOME (non-hidden), mdimport, poll ≤60s, skip if
-                         # never indexed
-  MDQuerySourceTests.swift  EndToEndParityTests.swift
+  SpotlightCanaryTests.swift  # fixture under $HOME (non-hidden), mdimport, poll ≤60s,
+                              # skip if never indexed
+  EndToEndParityTests.swift
 .github/workflows/ci.yml  release.yml  .github/release.yml
 scripts/build-universal.sh
 ```
@@ -272,6 +384,19 @@ via mdfind is load-bearing for their customers). Still gate on a runtime canary.
 7. **GNU extensions**: `-perm /mode`, `-printf` (directive table in SPEC.md), `-regextype`,
    `-readable/-writable/-executable`, `-daystart`.
 8. **Release**: universal build exercised end-to-end; tag `v0.1.0`.
+9. **Walk and content**: `--walk[=off|gaps|only]` via `HybridSource` (budgeted exhaustive
+   prefix → per-root coverage probe → index → indexed-folder list → gap walk) and
+   `Walker` (readdir `d_type` traversal; gap classification by dot names, special types,
+   directories absent from the index's folder list, `.noindex` / `.metadata_never_index` /
+   package subtrees; `-H/-L/-P`, `-x`, `-d`, `-maxdepth`,
+   `-prune` via `wouldPrune`); `PathAnchor` root refinement for literal `/component/` runs
+   in top-level `-path`/`-regex` conjuncts; the `-content` primary with index-membership
+   evaluation; `--progress`. Warning suppression under walk modes. Tests: Walker
+   classification and traversal against temp trees (no index), PathAnchor derivation
+   tables, HybridSource phase sequencing with an injected index, `-content` planner and
+   evaluator cases, Progress rendering with an injected clock; integration coverage of
+   `--walk` completeness against `find` on a fixture with dotfiles, symlinks, and a
+   `.noindex` subtree.
 
 ## Verification
 
@@ -280,6 +405,9 @@ via mdfind is load-bearing for their customers). Still gate on a runtime canary.
 - `make integration-test` locally: real-index end-to-end vs `/usr/bin/find` on an indexed
   `$HOME` fixture.
 - Manual smoke: `sfind ~/Documents -name '*.md' -mtime -7` vs `find` (timed); running sfind
-  with a root under a `.metadata_never_index` tree must print the unindexed-root warning.
+  with a root under a `.metadata_never_index` tree must print the unindexed-root warning,
+  and with `--walk` must instead list its contents with no warning. `sfind ~ --walk -type l`
+  must match `find ~ -type l` (sorted) and finish well under `find`'s time; `sfind
+  --walk=only` must match `find` byte-for-byte under `-s`.
 - Release dry-run: push a `v0.0.1-rc` tag, confirm tarball + SHA256SUMS + ad-hoc signature
   (`codesign -dv`, `lipo -info`).

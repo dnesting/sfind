@@ -8,6 +8,23 @@ public enum SymlinkMode: Equatable, Sendable {
     case always
 }
 
+/// How much of the filesystem sfind walks in addition to (or instead of) querying the
+/// Spotlight index (`--walk`).
+public enum WalkMode: String, Equatable, Sendable {
+    /// Index only (the default): no directory is ever read.
+    case off
+    /// Index plus a walk that visits only what Spotlight does not index: dot entries,
+    /// symlinks and special files, excluded (`.noindex`, `.metadata_never_index`) and
+    /// package subtrees, and roots the index has nothing for. Small scopes are walked
+    /// exhaustively without consulting the index at all.
+    case gaps
+    /// Plain filesystem walk; the index is never consulted.
+    case only
+
+    public var usesIndex: Bool { self != .only }
+    public var walks: Bool { self != .off }
+}
+
 /// Pre-path command-line options.
 public struct FindOptions: Equatable, Sendable {
     public var symlinks: SymlinkMode = .never
@@ -19,6 +36,10 @@ public struct FindOptions: Equatable, Sendable {
     public var sorted = false
     /// --mdfind: print the equivalent mdfind invocation instead of running the query.
     public var translateOnly = false
+    /// --walk[=MODE]: supplement (or replace) the index with a filesystem walk.
+    public var walk: WalkMode = .off
+    /// --progress: render a progress line on standard error.
+    public var progress = false
 
     public init() {}
 }

@@ -61,6 +61,19 @@ public struct QueryPlan: Equatable, Sendable {
     /// Predicates the query cannot express (their filtering happens post-query), in
     /// expression order. Used by --mdfind to note that its results are a superset.
     public var postFilterOnly: [String] = []
+    /// Directory-name anchors implied by top-level -path/-regex conjuncts, in
+    /// expression order; any one of them (not already satisfied by a root) can refine
+    /// the search scope to the subtrees the index finds for it.
+    public var anchors: [PathAnchor] = []
+    /// -content terms that are top-level conjuncts of the query: every index result
+    /// satisfied them, so their truth is "came from the index".
+    public var contentSatisfiedByIndex: Set<String> = []
+    /// -content terms whose truth must be established by a dedicated index query
+    /// (they sit under a negation or disjunction, or the scope is reduced-tier).
+    public var contentNeedingMembership: [String] = []
+
+    /// True when the query narrows nothing: the index would return the whole scope.
+    public var isMatchAll: Bool { queryString == QueryPlan.matchAll }
 
     /// The tier-safe match-all: `kMDItemFSName == "*"` alone returns nothing in
     /// fully-indexed trees, and `public.item` alone returns nothing in the reduced
@@ -93,15 +106,78 @@ public struct Planner {
             expression, daystart: command.globals.daystart)
         var postOnly: [String] = []
         collectPostFilterOnly(expression, underNegation: false, into: &postOnly)
+        var plan: QueryPlan
         switch narrowing {
         case .impossible:
-            return QueryPlan(queryString: nil, warnings: warnings, postFilterOnly: postOnly)
+            plan = QueryPlan(queryString: nil, warnings: warnings, postFilterOnly: postOnly)
         case .unconstrained:
-            return QueryPlan(
+            plan = QueryPlan(
                 queryString: QueryPlan.matchAll, warnings: warnings, postFilterOnly: postOnly)
         case .query(let q):
-            return QueryPlan(queryString: q, warnings: warnings, postFilterOnly: postOnly)
+            plan = QueryPlan(queryString: q, warnings: warnings, postFilterOnly: postOnly)
         }
+        let conjuncts = Planner.topLevelConjuncts(expression)
+        for case .primary(let primary) in conjuncts {
+            switch primary {
+            case .path(let pattern, let ci):
+                for anchor in PathAnchor.anchors(fnmatch: pattern, caseInsensitive: ci)
+                where !plan.anchors.contains(anchor) {
+                    plan.anchors.append(anchor)
+                }
+            case .regex(let pattern, let ci):
+                for anchor in PathAnchor.anchors(regex: pattern, caseInsensitive: ci)
+                where !plan.anchors.contains(anchor) {
+                    plan.anchors.append(anchor)
+                }
+            default:
+                break
+            }
+        }
+        var allContent: [String] = []
+        collectContentTerms(expression, into: &allContent)
+        if !reducedTier, plan.queryString != nil {
+            for case .primary(.content(let words)) in conjuncts {
+                plan.contentSatisfiedByIndex.insert(words)
+            }
+        }
+        plan.contentNeedingMembership = allContent.filter {
+            !plan.contentSatisfiedByIndex.contains($0)
+        }
+        return plan
+    }
+
+    /// The positive top-level conjuncts of an expression (flattening nested ands).
+    static func topLevelConjuncts(_ expression: Expression) -> [Expression] {
+        if case .and(let children) = expression {
+            return children.flatMap(topLevelConjuncts)
+        }
+        return [expression]
+    }
+
+    private func collectContentTerms(_ expression: Expression, into result: inout [String]) {
+        switch expression {
+        case .and(let children), .or(let children):
+            for child in children { collectContentTerms(child, into: &result) }
+        case .not(let child):
+            collectContentTerms(child, into: &result)
+        case .primary(.content(let words)):
+            if !result.contains(words) { result.append(words) }
+        case .primary:
+            break
+        }
+    }
+
+    /// The Spotlight query for a -content term: every whitespace-separated word must
+    /// match the indexed text, case- and diacritic-insensitively. Verified: a bare
+    /// word matches whole words only, `*` extends it to prefixes/suffixes/substrings,
+    /// and phrases do not match as a unit (hence one clause per word).
+    public static func contentQuery(_ words: String) -> String {
+        let clauses = words.split(whereSeparator: \.isWhitespace).map { word in
+            let escaped = word.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            return "kMDItemTextContent == \"\(escaped)\"cd"
+        }
+        return clauses.count == 1 ? clauses[0] : "(" + clauses.joined(separator: " && ") + ")"
     }
 
     /// Names the predicates whose truth the query cannot express: those with no index
@@ -279,6 +355,10 @@ public struct Planner {
 
         case .alwaysFalse:
             return .impossible
+
+        case .content(let words):
+            // Text content is not served in the reduced (hidden-directory) tier.
+            return reducedTier ? .unconstrained : .query(Planner.contentQuery(words))
 
         // No usable index attribute (verified): path/regex (kMDItemPath is not
         // queryable), atime (kMDItemLastUsedDate ≠ atime), ctime, permissions, inode,

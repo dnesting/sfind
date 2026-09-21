@@ -227,6 +227,12 @@ public enum Primary: Hashable, Sendable {
     // Depth-as-a-number BSD primary (-depth n), distinct from the bare -depth global.
     case depth(NumericArg)
 
+    // sfind extension: Spotlight text-content search (`-content WORDS`). Every
+    // whitespace-separated word must match the file's indexed text (case- and
+    // diacritic-insensitive; `*` wildcards allowed). True only for files the index
+    // returns for that query — there is no filesystem fallback for content.
+    case content(String)
+
     // Constants.
     case alwaysTrue
     case alwaysFalse
@@ -285,6 +291,7 @@ extension Primary {
         case .writable: return "-writable"
         case .executable: return "-executable"
         case .depth: return "-depth n"
+        case .content(let words): return "-content \(words)"
         case .alwaysTrue, .alwaysFalse, .print, .print0, .ls, .exec, .delete, .quit,
             .printf, .prune, .global:
             return nil

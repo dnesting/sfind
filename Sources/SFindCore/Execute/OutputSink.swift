@@ -21,6 +21,9 @@ public final class FileHandleSink: OutputSink {
     private var buffer: [UInt8] = []
     private let bufferLimit = 1 << 16
     private let lineBuffered: Bool
+    /// Runs before anything reaches the terminal (output or diagnostic), so a
+    /// progress line can clear itself first.
+    public var beforeWrite: (() -> Void)?
 
     public init(output: FileHandle = .standardOutput, errors: FileHandle = .standardError) {
         self.output = output
@@ -37,11 +40,13 @@ public final class FileHandleSink: OutputSink {
 
     public func diagnostic(_ message: String) {
         flush()
+        beforeWrite?()
         errors.write(Data("sfind: \(message)\n".utf8))
     }
 
     public func flush() {
         if !buffer.isEmpty {
+            beforeWrite?()
             output.write(Data(buffer))
             buffer.removeAll(keepingCapacity: true)
         }

@@ -5,7 +5,8 @@ import Foundation
 /// actions. This is what `sfind`'s main calls; tests drive it with a CollectingSink.
 public enum SFindCLI {
     static let usage =
-        "usage: sfind [-H | -L | -P] [-EXdsx] [-f path] path ... [--expr string] [expression]"
+        "usage: sfind [-H | -L | -P] [-EXdsx] [-f path] [--walk[=MODE]] [--progress] "
+        + "path ... [--expr string] [expression]"
 
     public static func run(arguments: [String], sink: OutputSink) -> Int32 {
         switch arguments.first {
@@ -56,25 +57,66 @@ public enum SFindCLI {
             sink.flush()
             return 1
         }
+        let walk = command.options.walk
         // Predicate-level warnings: only for expression terms that provably require
-        // files Spotlight cannot return (-type l, -lname, dot-name patterns).
-        for warning in plan.warnings {
-            sink.diagnostic("warning: \(warning.message)")
+        // files Spotlight cannot return (-type l, -lname, dot-name patterns). A walk
+        // covers exactly those files, so they are moot then.
+        if !walk.walks {
+            for warning in plan.warnings {
+                sink.diagnostic("warning: \(warning.message)")
+            }
+        }
+        if !walk.usesIndex,
+            !plan.contentNeedingMembership.isEmpty || !plan.contentSatisfiedByIndex.isEmpty
+        {
+            sink.diagnostic(
+                "warning: -content is answered by the Spotlight index, which --walk=only "
+                    + "never consults; it matches nothing")
         }
 
         if command.options.translateOnly {
             return emitMDFind(plan: plan, roots: roots, sink: sink)
         }
 
-        let source = MDQuerySource(queryString: plan.queryString, roots: roots)
-        let runner = Runner(command: command, environment: environment, sink: sink)
+        var progress: Progress?
+        if command.options.progress {
+            let reporter = Progress.standardError()
+            progress = reporter
+            (sink as? FileHandleSink)?.beforeWrite = { reporter.clearLine() }
+        }
+        defer { progress?.finish() }
+
+        // -content terms the main query cannot vouch for (under a negation or
+        // disjunction, or in the reduced tier) get their own membership sets. So does
+        // every term when walking: a small scope may never reach the index query, and
+        // walked candidates carry no "came from the index" evidence.
+        var content = Evaluator.ContentResolution(
+            satisfiedByIndex: walk.walks ? [] : plan.contentSatisfiedByIndex)
+        if walk.usesIndex {
+            let terms =
+                walk.walks
+                ? plan.contentNeedingMembership + plan.contentSatisfiedByIndex.sorted()
+                : plan.contentNeedingMembership
+            for words in terms {
+                let query = Planner.contentQuery(words)
+                let paths = MDQuerySource.synchronousCandidates(query: query, roots: roots)
+                content.membership[words] = Set(paths.map(\.candidate.path))
+            }
+        }
+
+        let source = HybridSource(
+            command: command, plan: plan, roots: roots, sink: sink, progress: progress)
+        let runner = Runner(
+            command: command, environment: environment, sink: sink, content: content,
+            progress: progress)
         let status = runner.run(source: source)
 
         // Scope diagnostics are deferred: when the index returned nothing, ask it the
         // authoritative question per root — "is ANYTHING under this root indexed?" —
         // and explain the emptiness. This stays accurate even when heuristics
-        // (markers, hidden dirs) would guess wrong in either direction.
-        if source.indexResultCount == 0, plan.queryString != nil {
+        // (markers, hidden dirs) would guess wrong in either direction. A walk
+        // already handles uncovered roots itself.
+        if walk == .off, source.indexResultCount == 0, plan.queryString != nil {
             for root in roots where !MDQuerySource.indexHasAnyEntry(under: root) {
                 var message =
                     "warning: \(root.typed): this search root is not in the Spotlight "
@@ -152,9 +194,9 @@ public enum SFindCLI {
 
         sfind evaluates find(1) expressions against the Spotlight index instead of
         walking the filesystem. BSD find semantics are ground truth; conflict-free GNU
-        extensions are included. Results are limited to what Spotlight indexes — see
-        the CAVEATS section of sfind(1) or SPEC.md for the gaps (dotfiles, symlinks,
-        excluded trees).
+        extensions are included. By default results are limited to what Spotlight
+        indexes — see the CAVEATS section of sfind(1) or SPEC.md for the gaps
+        (dotfiles, symlinks, excluded trees); --walk fills them in.
 
         Options (before paths):
           -H | -L | -P   symlink handling for roots / everywhere / never (default -P)
@@ -170,6 +212,15 @@ public enum SFindCLI {
                          need no shell escaping:
                              sfind ~/Docs --expr '(-name "*.md" -o -name "*.txt") -mtime -7'
           --mdfind       print the equivalent mdfind invocation instead of running it
+          --walk[=MODE]  supplement the index with a filesystem walk. gaps (the
+                         default for bare --walk) walks only what Spotlight does not
+                         index: dot entries, symlinks and special files, .noindex /
+                         .metadata_never_index / package subtrees, and roots the index
+                         has nothing for; small scopes are walked outright. only never
+                         consults the index (a plain find). off is the default.
+          --progress     show a progress line on stderr: an estimate of the work left
+                         plus candidates from the query, from the walk, filtered out,
+                         and matched
           --help, -?     this help
           --version      version
 
@@ -179,6 +230,8 @@ public enum SFindCLI {
         -xattr(name), -maxdepth/-mindepth, -prune, and the actions -print, -print0,
         -ls, -exec/-execdir/-ok/-okdir, -delete, -quit. GNU extensions: -printf,
         -regextype, -readable/-writable/-executable, -daystart, -perm /mode.
+        sfind extension: -content WORDS matches files whose Spotlight-indexed text
+        contains every word (case-insensitive; * wildcards; whole words otherwise).
 
         Exit status: 0 unless an error occurred (match count is irrelevant, like find).
 

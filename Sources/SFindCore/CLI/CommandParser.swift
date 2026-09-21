@@ -17,8 +17,7 @@ public struct CommandParser {
         // here too.
         optionLoop: while index < arguments.count {
             let arg = arguments[index]
-            if arg == "--mdfind" {
-                options.translateOnly = true
+            if try Self.applyLongFlag(arg, to: &options) {
                 index += 1
                 continue
             }
@@ -90,8 +89,8 @@ public struct CommandParser {
         var tokens: [String] = []
         while index < arguments.count {
             let arg = arguments[index]
-            if arg == "--mdfind" {
-                options.translateOnly = true
+            if try Self.applyLongFlag(arg, to: &options) {
+                // Position-independent sfind flags.
             } else if arg == "--expr" {
                 index += 1
                 guard index < arguments.count else {
@@ -121,6 +120,29 @@ public struct CommandParser {
             paths: paths,
             expression: expression,
             implicitPrint: !parser.sawActionPrimary)
+    }
+
+    /// sfind's double-dash flags that may appear anywhere on the command line
+    /// (--mdfind, --walk[=MODE], --progress). Returns false for anything else.
+    private static func applyLongFlag(_ arg: String, to options: inout FindOptions) throws
+        -> Bool
+    {
+        switch arg {
+        case "--mdfind":
+            options.translateOnly = true
+        case "--progress":
+            options.progress = true
+        case "--walk":
+            options.walk = .gaps
+        default:
+            guard arg.hasPrefix("--walk=") else { return false }
+            let value = String(arg.dropFirst("--walk=".count))
+            guard let mode = WalkMode(rawValue: value) else {
+                throw ParseError("--walk: \(value): expected off, gaps, or only")
+            }
+            options.walk = mode
+        }
+        return true
     }
 }
 
@@ -311,6 +333,14 @@ struct ExpressionParser {
             return .writable
         case "-executable":
             return .executable
+
+        // sfind extension: Spotlight text content.
+        case "-content":
+            let words = try argument(for: token)
+            guard !words.split(whereSeparator: \.isWhitespace).isEmpty else {
+                throw ParseError("-content: empty search text")
+            }
+            return .content(words)
 
         // Constants.
         case "-true":

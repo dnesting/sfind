@@ -26,15 +26,21 @@ public final class Runner {
     let environment: PlannerEnvironment
     let sink: OutputSink
     let promptResponder: ((String) -> Bool)?
+    let content: Evaluator.ContentResolution
+    let progress: Progress?
 
     public init(
         command: ParsedCommand, environment: PlannerEnvironment, sink: OutputSink,
-        promptResponder: ((String) -> Bool)? = nil
+        promptResponder: ((String) -> Bool)? = nil,
+        content: Evaluator.ContentResolution = Evaluator.ContentResolution(),
+        progress: Progress? = nil
     ) {
         self.command = command
         self.environment = environment
         self.sink = sink
         self.promptResponder = promptResponder
+        self.content = content
+        self.progress = progress
     }
 
     /// Sorts candidates in find -s order: lexicographic over path components.
@@ -52,7 +58,7 @@ public final class Runner {
         do {
             evaluator = try Evaluator(
                 command: command, environment: environment, sink: sink,
-                promptResponder: promptResponder)
+                promptResponder: promptResponder, content: content)
         } catch {
             sink.diagnostic("\(error)")
             sink.flush()
@@ -70,6 +76,35 @@ public final class Runner {
                 if case .prune = primary { return true }
                 return false
             }
+        let hasExec = command.containsPrimary { primary in
+            if case .exec = primary { return true }
+            return false
+        }
+        if pruneActive, !hasExec, let hybrid = source as? HybridSource {
+            // Let the walk skip pruned subtrees instead of reading them only to have
+            // their contents excluded here; exact without -exec (see wouldPrune).
+            hybrid.shouldDescend = { [evaluator] candidate in !evaluator.wouldPrune(candidate) }
+        }
+
+        func process(_ candidate: Candidate) throws -> Evaluator.Outcome {
+            if let progress {
+                if candidate.fromIndex {
+                    progress.counters.query += 1
+                } else {
+                    progress.counters.walk += 1
+                }
+            }
+            let outcome = try evaluator.process(candidate)
+            if let progress {
+                if outcome.matched {
+                    progress.counters.matched += 1
+                } else {
+                    progress.counters.filtered += 1
+                }
+                progress.tick()
+            }
+            return outcome
+        }
 
         do {
             if command.options.sorted || pruneActive || hasDelete {
@@ -95,7 +130,7 @@ public final class Runner {
                         continue
                     }
                     do {
-                        let outcome = try evaluator.process(candidate)
+                        let outcome = try process(candidate)
                         if pruneActive, outcome.pruned, outcome.isDirectory {
                             prunedPrefixes.append(candidate.path)
                         }
@@ -108,7 +143,7 @@ public final class Runner {
                 // delivers batches; -quit stops the query early.
                 try source.forEachCandidate { candidate in
                     do {
-                        try evaluator.process(candidate)
+                        _ = try process(candidate)
                     } catch is QuitSignal {
                         return false
                     }
@@ -122,6 +157,6 @@ public final class Runner {
         }
         evaluator.finish()
         sink.flush()
-        return evaluator.sawError ? 1 : 0
+        return evaluator.sawError || source.sawError ? 1 : 0
     }
 }

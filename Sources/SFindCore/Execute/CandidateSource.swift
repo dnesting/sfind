@@ -8,11 +8,23 @@ public struct Candidate: Equatable, Sendable {
     public var depth: Int
     /// st_dev of the root operand, for -x/-xdev.
     public var rootDevice: Int32?
+    /// True when the Spotlight index produced this candidate (as opposed to a walk or
+    /// a test array). Decides -content terms the query already established.
+    public var fromIndex: Bool
+    /// The file type readdir(3) reported when a walk produced this candidate, set only
+    /// when it equals what the evaluator's own stat would report (so it can stand in
+    /// for that stat). Its presence also vouches that the entry existed a moment ago.
+    public var direntType: FileType?
 
-    public init(path: String, depth: Int, rootDevice: Int32? = nil) {
+    public init(
+        path: String, depth: Int, rootDevice: Int32? = nil, fromIndex: Bool = false,
+        direntType: FileType? = nil
+    ) {
         self.path = path
         self.depth = depth
         self.rootDevice = rootDevice
+        self.fromIndex = fromIndex
+        self.direntType = direntType
     }
 
     /// Builds a candidate for `path` found under `root`, deriving depth from the
@@ -41,9 +53,15 @@ public protocol CandidateSource {
     /// -quit). Returns the number of candidates delivered.
     @discardableResult
     func forEachCandidate(_ body: (Candidate) throws -> Bool) throws -> Int
+
+    /// True when producing candidates hit a non-fatal error (an unreadable directory
+    /// during a walk); find's exit status becomes 1.
+    var sawError: Bool { get }
 }
 
 extension CandidateSource {
+    public var sawError: Bool { false }
+
     /// Collects the full candidate list (used when ordering is required: -s, -prune,
     /// -delete).
     public func collect() throws -> [Candidate] {

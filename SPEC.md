@@ -76,6 +76,52 @@ argument ends option parsing.
   -literal '<query>'`) instead of running the search. Expression terms the query language
   cannot express are noted on stderr, since the printed query returns a superset of the
   expression's matches. Exits 1 when the expression can only match unindexed files.
+- [x] `--walk[=MODE]` — supplement (or replace) the index with a filesystem walk. MODE is
+  `off` (the default), `gaps` (the default for a bare `--walk`), or `only`. Accepted before
+  the paths or among the expression tokens.
+  - `gaps`: the walk covers exactly what Spotlight does not index, so the index still does
+    the bulk of the work and sfind stays faster than a plain `find`. Phases, each streaming
+    to the post-filter: (1) an exhaustive walk of the roots under a small budget (8192
+    candidates or 150 ms) — small scopes finish here and never pay MDQuery's ~200 ms IPC
+    floor; (2) otherwise, per root, an authoritative probe of whether the index holds
+    anything under it (roots carrying an exclusion marker, or with nothing indexed, are
+    walked exhaustively instead); (3) the planned MDQuery over the covered roots, streaming
+    as usual; (4) one synchronous query listing every directory the index holds under
+    those roots (`kMDItemContentTypeTree == "public.folder"`; skipped when a root is a
+    hidden directory, since the reduced tier does not serve content type — about 1–2 s for
+    the ~25k folders of a home directory); (5) a gap walk of those roots yielding only what
+    the index does not hold: names starting with a dot, anything that is not a regular
+    file or directory (symlinks, FIFOs, sockets, devices, whiteouts), any directory absent
+    from the folder list (yielded itself, then walked exhaustively — this catches the
+    exclusions name rules cannot see: Spotlight privacy entries, unindexed volumes mounted
+    below the root, and system policy such as most of `~/Library`), and everything under a
+    gap subtree — a dot directory, a `*.noindex` directory, a directory containing
+    `.metadata_never_index`, or a package/bundle directory. Paths delivered by the budgeted
+    walk are excluded from the later phases. Regular files in indexed directories cost the
+    walk no `lstat` at all (`readdir` `d_type`), which is what keeps it cheaper than find,
+    which stats every entry.
+  - `only`: a plain walk; the index is never consulted. Equivalent to `find`, for when the
+    intent is "find something" rather than "query Spotlight". `-content` matches nothing
+    here (a warning says so).
+
+  Under either walk mode the predicate-level completeness warnings (`-type l`, `-lname`,
+  dot-name patterns) are suppressed, since the walk covers those files, and the
+  root-not-indexed diagnostic is not emitted. The walk honors `-H`/`-L`/`-P` (a symlink
+  cycle under `-L` is reported as a diagnostic and not descended), `-x`, `-d` (post-order),
+  `-maxdepth` (deeper directories are never read), and `-prune`: when the expression has no
+  `-exec` family primary, a side-effect-free dry-run evaluation decides whether to descend,
+  so pruned trees are never read; with `-exec` present the walk descends and the usual
+  post-processing excludes the contents. Limitations: items 6 and 7 under
+  [Known divergences](#known-divergences).
+- [x] `--progress` — a status line on stderr. On a terminal it is redrawn in place
+  (cleared before any other output goes out, then redrawn); otherwise `sfind: …` lines are
+  emitted about once a second. Shows a bar with a best-effort completion estimate (walk
+  phases: a hierarchical estimate from the traversal position, assuming equal work per
+  directory; the index phases: an indeterminate marker, since MDQuery reports no total),
+  the phase name (`walking`, `querying index`, `listing indexed folders`), and counters:
+  candidates received from the query, candidates produced by the walk, entries the walk
+  scanned, candidates the post-filter rejected (`filtered`), matches, and elapsed time.
+  Ends with a final summary line.
 - [x] `--help` / `-?` — usage and option summary. `--version` — version. (Recognized as
   the first argument.)
 
@@ -153,7 +199,8 @@ rounding. `now` is fixed at startup.
   macOS find).
   Index: `d` → `kMDItemContentTypeTree == "public.folder"`; `f` → no narrowing (a `!=
   "public.folder"` clause is unsound for items missing the attribute); `l s p b c w` → no
-  narrowing possible + **warning** (these file kinds are not indexed at all).
+  narrowing possible + **warning** (these file kinds are not indexed at all; the warning is
+  suppressed under `--walk`, whose gap walk yields them).
   Post: `lstat` `st_mode` (or `stat` under `-L`/`-H` per symlink rules).
   Dialect: GNU's `-type f,d` comma lists are not supported (matches macOS).
 - [x] `-size n[ckMGTP]` — no suffix: `st_size` rounded UP to 512-byte blocks, then compared.
@@ -183,6 +230,25 @@ rounding. `now` is fixed at startup.
   macOS-only.
 - [x] `-fstype type` — filesystem type (plus pseudo-types `local`, `rdonly`).
   Index: none. Post: `statfs`.
+
+## Primaries — content
+
+sfind extension; `find` has no equivalent, and only the index can answer it.
+
+- [x] `-content words` — the file's Spotlight-indexed text contains every
+  whitespace-separated word. Each word becomes `kMDItemTextContent == "word"cd` (case- and
+  diacritic-insensitive), AND-ed. Verified: a bare word matches whole words only; `*`
+  extends it to prefix/suffix/substring matches; phrases do not match as a unit (hence one
+  clause per word). An empty word list is a usage error.
+  Index: that clause. No narrowing in the reduced (hidden-root) tier, which serves no text
+  content. Post: index membership. In index-only mode, a term that is a top-level conjunct
+  of the query was satisfied by every index result, so it is true iff the candidate came
+  from the index; any other term (under `!` or `-o`, or in the reduced tier) gets a
+  dedicated synchronous query over the typed roots before the search runs, and the
+  post-filter consults that membership set. Under `--walk` every term gets the membership
+  query, because a small scope may finish inside the budgeted walk without any index query
+  and walked candidates carry no index evidence. Files the index does not hold never
+  match; `--walk=only` warns that `-content` matches nothing. `--mdfind` prints the clause.
 
 ## Primaries — actions
 
@@ -279,18 +345,22 @@ These are inherent to the index-backed design and are documented behavior, not b
 1. **Invisible files.** Spotlight does not index: dotfiles (never returned by any query),
    symlinks, sockets, FIFOs, device nodes, whiteouts, app-bundle contents, `/usr`, `/bin`,
    `/etc`, `/tmp`, `$TMPDIR` (reduced), volumes with indexing disabled, and any tree under a
-   `.metadata_never_index` marker or `*.noindex` directory. Warning policy: sfind warns
-   eagerly only when an expression term provably requires such files (`-type l/s/p/b/c/w`,
-   `-lname`, dot-anchored `-name` patterns). Scope-level diagnostics (an exclusion marker on
-   an ancestor — detected by an O(path-depth) stat walk, not a directory scan — or a root
-   inside a hidden directory) are deferred: they print only when the index returned nothing,
-   as an explanation of the emptiness. Warning paths are rendered relative to the working
-   directory when the root was typed relative.
+   `.metadata_never_index` marker or `*.noindex` directory. By default (`--walk=off`) these
+   are simply absent from results; [`--walk`](#sfind-specific-options) fills them in with a
+   walk restricted to exactly those gaps, and `--walk=only` walks everything. Warning
+   policy without a walk: sfind warns eagerly only when an expression term provably
+   requires such files (`-type l/s/p/b/c/w`, `-lname`, dot-anchored `-name` patterns).
+   Scope-level diagnostics are deferred: they print only when the index returned nothing,
+   after an authoritative probe of whether anything under the root is indexed, with the
+   likely cause (an exclusion marker on an ancestor — detected by an O(path-depth) stat
+   walk, not a directory scan — or a root inside a hidden directory) as an explanation of
+   the emptiness. Warning paths are rendered relative to the working directory when the
+   root was typed relative. Under a walk mode neither kind of warning is printed.
 2. **Result ordering** is unspecified (find's is traversal order). Use `-s` for deterministic
    lexicographic order. `-delete` still guarantees children-before-parents.
 3. **Hidden-directory scopes** are reachable only when the root itself is the hidden
    directory, and only filename/owner/date metadata is queryable there; sfind restricts its
-   query narrowing accordingly.
+   query narrowing accordingly (and `-content` has nothing to match against).
 4. **Streaming and memory.** The query runs asynchronously and results stream to the
    post-filter (and stdout) in batches as the index delivers them, so output flows like
    find's and a closed pipe (e.g. `| head`) terminates the search early. The MDQuery API
@@ -301,16 +371,37 @@ These are inherent to the index-backed design and are documented behavior, not b
 5. `-ls` prints allocated blocks (`st_blocks`); on APFS (sparse/compressed files) this can
    differ from classic HFS expectations — identical to real find, listed here only because
    parity tests must not conflate it with `-size` rounding.
+6. **Gap walk coverage.** In `--walk=gaps` mode the walk decides what to yield from names
+   and file types (dot names, non-regular non-directory types, gap subtrees as listed
+   under `--walk`) plus the index's own list of the directories it holds: a directory
+   missing from that list is yielded and walked exhaustively, which catches exclusions the
+   name rules cannot see (`*.noindex` and marker-carrying directories themselves are
+   yielded this way, since the index normally lacks them). What remains invisible is an
+   individual regular file the index lacks inside a directory it does hold — a stale
+   index; `--walk=only` is the escape hatch. A root that is itself a hidden directory is
+   treated as index-covered for its non-dot contents, matching the reduced tier, and no
+   folder list is consulted for it. A root the index holds nothing for is walked
+   exhaustively, so a wholly unindexed root is complete.
+7. **Path anchors.** When a top-level positive `-path`/`-ipath`/`-regex`/`-iregex` conjunct
+   contains a literal `/component/` run (no glob or regex metacharacters in the run;
+   nothing is derived past a `[` or `\`; regex patterns using grouping, alternation, or
+   intervals yield nothing; a quantifier after the closing slash disqualifies the run),
+   every match must have a directory of that name as an ancestor (case-insensitively for
+   the `-i` forms). If no root's own path already satisfies the anchor, and either a walk
+   is enabled or the query would otherwise return the whole scope (match-all), sfind first
+   asks the index for directories of that name under the roots and makes them the new
+   roots — nested ones collapsed into their ancestors, depths still relative to the typed
+   root — so both the index query and the walk cover only those subtrees. If the index
+   knows no such directory, nothing is searched. Consequence: in `gaps` mode, anchor
+   directories the index cannot see (inside hidden or excluded trees) are not walked.
 
 ## Future work
 
-- Add a mechanism for users to allow for a filesystem walk to complete a search expression
-  for files not indexed by Spotlight. This could look like an implicit walk for any uindexable predicate,
-  or an explicit walk (so that e.g. `sfind -name foo` matches even entries in unindexed trees or symlinks).
-- Conjunct-narrowed walking: when an unindexable predicate is conjoined with an indexable
-  location-shaped one (e.g. `-path '*/node_modules/*' -type l`), use the index to find the
-  candidate subtrees and walk only those.
-- Small-scope shortcut: MDQuery has a ~200ms IPC floor; for tiny/shallow scopes a plain walk
-  is faster. Could auto-select once `--walk` machinery exists. Users should have control if their intent is to query Spotlight versus find something.
-- `mdfind`-style free-text/content predicate (`kMDItemTextContent` is queryable) — a
-  content-grep primary find can't offer.
+- Run the index query and the gap walk concurrently instead of as sequential phases; today
+  both stream on the main thread and the walk waits for the index to finish.
+- Volume-level index status (`mdutil -s`) as a cheaper signal than the indexed-folder
+  list for unindexed volumes mounted below a root, which today cost a full folder
+  enumeration to detect.
+- `--walk=all`: an exhaustive walk merged with the index (deduplicated by path), for the
+  cases gap classification cannot model (a stale index) while still streaming index
+  results first.

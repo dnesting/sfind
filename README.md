@@ -21,8 +21,29 @@ into one MDQuery (a recall-oriented over-approximation), then re-verifies every 
 exactly with `lstat`/`fnmatch`/`regexec` before running actions — *the index narrows, the
 post-filter decides*. Predicates Spotlight can't help with (permissions, inode, atime, …)
 are handled entirely by the post-filter. Files Spotlight can't see at all (dotfiles,
-symlinks, excluded trees) are a documented gap: sfind warns when your expression or search
-root provably depends on them.
+symlinks, excluded trees) are a documented gap: by default sfind warns when your
+expression or search root provably depends on them, and `--walk` fills the gap with a
+filesystem walk that visits only what the index cannot hold.
+
+## Walking the gaps
+
+`--walk` supplements the index rather than replacing it: the index still answers for
+everything it holds, and a walk covers only dot entries, symlinks and special files,
+`.noindex` / `.metadata_never_index` / bundle subtrees, directories missing from the
+index's own folder list (privacy exclusions, most of `~/Library`), and roots the index
+has nothing for. Regular files in indexed directories cost the walk no `stat`, so the
+combination stays well ahead of a plain `find`. Small scopes are walked outright, skipping
+the index's startup cost.
+
+```sh
+sfind ~ --walk -name '*.env'              # dotfiles included; the index still narrows
+sfind ~ --walk --progress -type l         # symlinks (never indexed), with a status line
+sfind ~/Documents -content invoice        # sfind extension: Spotlight full-text search
+```
+
+`--walk=only` never consults the index (equivalent to `find`), for when the index is stale
+or the intent is "find something" rather than "query Spotlight". See the `--walk` entry
+and known divergences in [SPEC.md](SPEC.md) for what the gap walk can and cannot see.
 
 ## Building
 

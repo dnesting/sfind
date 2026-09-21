@@ -9,6 +9,21 @@ public struct RootScope: Sendable {
     public var absolute: String
     public var canonical: String
     public var device: Int32?
+    /// Depth of this root below the user's operand it was refined from (0 for the
+    /// operands themselves); candidate depths are offset by it so -maxdepth and
+    /// friends stay relative to what the user typed.
+    public var depthOffset: Int = 0
+
+    /// A root refined from a user operand: `typed` is already in output form.
+    public init(
+        typed: String, absolute: String, canonical: String, device: Int32?, depthOffset: Int
+    ) {
+        self.typed = typed
+        self.absolute = absolute
+        self.canonical = canonical
+        self.device = device
+        self.depthOffset = depthOffset
+    }
 
     public init(typed: String, followSymlinks: Bool) {
         self.typed = typed
@@ -76,6 +91,8 @@ private struct UnsafeSendableBox<T>: @unchecked Sendable {
 public final class MDQuerySource: CandidateSource {
     public let queryString: String?
     public let roots: [RootScope]
+    /// Candidate paths an earlier phase already delivered; never delivered again.
+    public let skip: Set<String>
     /// Results the index itself returned (excludes the seeded roots). The
     /// authoritative "did the index have anything for us" signal.
     public private(set) var indexResultCount = 0
@@ -90,9 +107,10 @@ public final class MDQuerySource: CandidateSource {
     private var stopped = false
     private var failure: Error?
 
-    public init(queryString: String?, roots: [RootScope]) {
+    public init(queryString: String?, roots: [RootScope], skip: Set<String> = []) {
         self.queryString = queryString
         self.roots = roots
+        self.skip = skip
     }
 
     @discardableResult
@@ -105,9 +123,13 @@ public final class MDQuerySource: CandidateSource {
         failure = nil
         processed = 0
         indexResultCount = 0
-        for root in roots where seen.insert(root.typed).inserted {
+        for root in roots where seen.insert(root.typed).inserted && !skip.contains(root.typed) {
             delivered += 1
-            if try !body(Candidate(path: root.typed, depth: 0, rootDevice: root.device)) {
+            // Seeded, not returned by the query: it vouches for nothing (-content).
+            let candidate = Candidate(
+                path: root.typed, depth: root.depthOffset, rootDevice: root.device,
+                fromIndex: false)
+            if try !body(candidate) {
                 return delivered
             }
         }
@@ -178,7 +200,9 @@ public final class MDQuerySource: CandidateSource {
             indexResultCount = total
             for path in Self.copyPaths(items) {
                 guard let path, seen.insert(path).inserted else { continue }
-                guard let candidate = Self.map(path: path, roots: orderedRoots) else { continue }
+                guard let candidate = Self.map(path: path, roots: orderedRoots),
+                    !skip.contains(candidate.path)
+                else { continue }
                 delivered += 1
                 do {
                     if try !body(candidate) {
@@ -204,18 +228,47 @@ public final class MDQuerySource: CandidateSource {
 
     /// Authoritative per-root probe: does the index hold ANYTHING under this root?
     /// Used to explain empty results accurately even when heuristics (markers, hidden
-    /// dirs) would guess wrong in either direction.
+    /// dirs) would guess wrong in either direction, and by --walk to decide whether a
+    /// root must be walked exhaustively.
     public static func indexHasAnyEntry(under root: RootScope) -> Bool {
-        guard
-            let query = MDQueryCreate(
-                kCFAllocatorDefault, QueryPlan.matchAll as CFString, nil, nil)
-        else { return false }
-        MDQuerySetSearchScope(query, [root.absolute] as CFArray, 0)
-        MDQuerySetMaxCount(query, 1)
-        guard MDQueryExecute(query, CFOptionFlags(kMDQuerySynchronous.rawValue)) else {
-            return false
+        !(synchronousPaths(query: QueryPlan.matchAll, roots: [root], maxCount: 1) ?? []).isEmpty
+    }
+
+    /// Runs a query to completion and returns the raw result paths (kMDItemPath form),
+    /// or nil when the query could not be created or executed.
+    public static func synchronousPaths(query: String, roots: [RootScope], maxCount: Int? = nil)
+        -> [String]?
+    {
+        guard let mdQuery = MDQueryCreate(kCFAllocatorDefault, query as CFString, nil, nil)
+        else { return nil }
+        MDQuerySetSearchScope(mdQuery, roots.map(\.absolute) as CFArray, 0)
+        if let maxCount { MDQuerySetMaxCount(mdQuery, maxCount) }
+        guard MDQueryExecute(mdQuery, CFOptionFlags(kMDQuerySynchronous.rawValue)) else {
+            return nil
         }
-        return MDQueryGetResultCount(query) > 0
+        let count = MDQueryGetResultCount(mdQuery)
+        var items: [MDItem] = []
+        items.reserveCapacity(count)
+        for i in 0..<count {
+            if let pointer = MDQueryGetResultAtIndex(mdQuery, i) {
+                items.append(Unmanaged<MDItem>.fromOpaque(pointer).takeUnretainedValue())
+            }
+        }
+        return copyPaths(items).compactMap { $0 }
+    }
+
+    /// Runs a query to completion and maps its results onto the roots, pairing each
+    /// candidate with the raw absolute path the index reported.
+    public static func synchronousCandidates(query: String, roots: [RootScope])
+        -> [(raw: String, candidate: Candidate)]
+    {
+        let ordered = roots.sorted { $0.canonical.count > $1.canonical.count }
+        var seen = Set<String>()
+        return (synchronousPaths(query: query, roots: roots) ?? []).compactMap { path in
+            guard seen.insert(path).inserted, let candidate = map(path: path, roots: ordered)
+            else { return nil }
+            return (path, candidate)
+        }
     }
 
     /// kMDItemPath is computed on demand, never stored, so the batched
@@ -258,7 +311,9 @@ public final class MDQuerySource: CandidateSource {
             for form in forms {
                 for prefix in prefixes {
                     if form == prefix {
-                        return Candidate(path: root.typed, depth: 0, rootDevice: root.device)
+                        return Candidate(
+                            path: root.typed, depth: root.depthOffset, rootDevice: root.device,
+                            fromIndex: true)
                     }
                     if form.hasPrefix(prefix + "/") {
                         let relative = String(form.dropFirst(prefix.count + 1))
@@ -267,8 +322,8 @@ public final class MDQuerySource: CandidateSource {
                             root.typed.hasSuffix("/")
                             ? String(root.typed.dropLast()) : root.typed
                         return Candidate(
-                            path: typedBase + "/" + relative, depth: depth,
-                            rootDevice: root.device)
+                            path: typedBase + "/" + relative, depth: root.depthOffset + depth,
+                            rootDevice: root.device, fromIndex: true)
                     }
                 }
             }

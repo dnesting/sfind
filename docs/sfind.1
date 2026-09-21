@@ -1,4 +1,4 @@
-.Dd August 22, 2026
+.Dd September 21, 2026
 .Dt SFIND 1
 .Os
 .Sh NAME
@@ -9,6 +9,8 @@
 .Op Fl H | L | P
 .Op Fl EXdsx
 .Op Fl f Ar path
+.Op Fl -walk Ns Op = Ns Ar mode
+.Op Fl -progress
 .Ar path ...
 .Op Fl -expr Ar string
 .Op Ar expression
@@ -88,10 +90,110 @@ invocation for the translated Spotlight query.
 Expression terms the query language cannot express are reported to standard
 error, since the printed query then returns a superset of the expression's
 matches.
+.It Fl -walk Ns Op = Ns Ar mode
+Supplement the index with a filesystem walk.
+.Ar mode
+is one of:
+.Bl -tag -width "gaps" -compact
+.It Cm off
+The default: only the index is consulted and no directory is ever read.
+.It Cm gaps
+The default for a bare
+.Fl -walk .
+The walk visits only what Spotlight does not index: entries whose names start
+with a dot, anything that is not a regular file or directory
+.Pq symlinks, FIFOs, sockets, devices ,
+everything under a dot directory, a
+.Pa *.noindex
+directory, a directory carrying
+.Pa .metadata_never_index ,
+or an application bundle, every directory missing from the index's own list of
+the folders it holds under the roots
+.Pq privacy exclusions, unindexed volumes, most of Pa ~/Library ,
+and any search root the index holds nothing for.
+The index still answers for everything else, and regular files that are the
+index's job cost the walk no
+.Xr stat 2
+at all, so
+.Nm
+remains faster than
+.Xr find 1 .
+Small scopes are walked outright, before the index is consulted, and skip its
+startup cost entirely.
+.It Cm only
+Never consult the index: a plain filesystem walk, equivalent to
+.Xr find 1 .
+Use this when the index may be stale or the intent is to find something rather
+than to query Spotlight.
+.Ic -content
+matches nothing in this mode.
+.El
+.Pp
+The walk honors
+.Fl H , L , P , x ,
+and
+.Fl d ,
+.Ic -maxdepth
+.Pq deeper directories are never read ,
+and
+.Ic -prune
+.Po pruned subtrees are never read unless the expression contains an
+.Ic -exec
+family primary, whose exit status could steer evaluation
+.Pc .
+When
+.Ic -path
+or
+.Ic -regex
+names a literal directory component
+.Pq for example Ql */node_modules/* ,
+the index is first asked for directories of that name under the roots and both
+the query and the walk are confined to those subtrees.
+Under either walk mode the completeness warnings described in
+.Sx CAVEATS
+are not printed.
+.It Fl -progress
+Show a progress line on standard error.
+On a terminal it is redrawn in place and cleared before other output;
+otherwise a status line is emitted about once a second.
+It shows a bar with a best-effort completion estimate
+.Pq indeterminate during the index phase, which reports no total ,
+the current phase, and counters: candidates from the index query, candidates
+from the walk, entries the walk scanned, candidates the post-filter rejected,
+matches, and elapsed time.
+A summary line is printed at the end.
 .It Fl -help , Fl \&?
 Print usage and a summary.
 .It Fl -version
 Print the version.
+.El
+.Sh SFIND PRIMARIES
+All
+.Xr find 1
+primaries and operators are accepted.
+.Nm
+adds one:
+.Bl -tag -width Fl
+.It Ic -content Ar words
+True if the file's Spotlight-indexed text contains every whitespace-separated
+word in
+.Ar words ,
+compared case- and diacritic-insensitively.
+A bare word matches whole words only;
+.Ql *
+extends it to prefixes, suffixes, and substrings
+.Pq Ql invoic* ;
+a multi-word argument requires each word somewhere in the text, not the phrase.
+Only the index can answer this primary: files the index does not hold never
+match.
+Under
+.Fl -walk
+each term is resolved by a dedicated index query over the search roots before
+the search runs, and under
+.Fl -walk Ns = Ns Cm only
+it matches nothing.
+Text content is not served for a search root that is itself a hidden
+directory.
 .El
 .Sh EXIT STATUS
 .Ex -std
@@ -115,12 +217,45 @@ Show the Spotlight query that would run:
 .Bd -literal -offset indent
 sfind ~ --mdfind -name '*.swift' -newermt 'yesterday'
 .Ed
+.Pp
+Dotfiles, which the index never returns, with the index still narrowing the
+rest:
+.Bd -literal -offset indent
+sfind ~ --walk -name '*.env'
+.Ed
+.Pp
+Symlinks, with a progress line:
+.Bd -literal -offset indent
+sfind ~ --walk --progress -type l
+.Ed
+.Pp
+Full-text search over indexed content:
+.Bd -literal -offset indent
+sfind ~/Documents -content invoice -mtime -30
+.Ed
+.Pp
+A plain walk, as
+.Xr find 1
+would do it:
+.Bd -literal -offset indent
+sfind --walk=only ~/Library -name '*.plist'
+.Ed
+.Sh SEE ALSO
+.Xr find 1 ,
+.Xr mdfind 1 ,
+.Xr mdutil 1
+.Pp
+.Lk https://github.com/dnesting/sfind
+— SPEC.md documents every option's index-vs-post-filter determination and
+the verified behavioral details.
 .Sh CAVEATS
-Spotlight does not index everything, and
+Spotlight does not index everything, and by default
 .Nm
-deliberately never falls back to walking the filesystem.
-Invisible to the index
-.Pq and therefore to Nm :
+never falls back to walking the filesystem.
+Invisible to the index, and therefore to
+.Nm
+without
+.Fl -walk :
 dotfiles, symlinks, sockets, FIFOs, device nodes, application bundle
 contents,
 .Pa /usr , /bin , /etc , /tmp ,
@@ -134,6 +269,24 @@ warns on standard error when an expression term provably requires such files
 .Pq for example Ic -type l ,
 and, after an empty result, when a search root turns out to be excluded from
 the index.
+.Fl -walk
+fills these gaps with a walk confined to them.
+.Pp
+The gap walk asks the index which directories it holds and walks the rest
+exhaustively, but it cannot see an individual regular file the index lacks
+inside a directory it does hold
+.Pq a stale index ;
+such files are still missed under
+.Fl -walk Ns = Ns Cm gaps ,
+and
+.Fl -walk Ns = Ns Cm only
+is the escape hatch.
+When a
+.Ic -path
+or
+.Ic -regex
+component confines the search to index-found directories, such directories
+inside hidden or excluded trees are invisible to the index and are not walked.
 .Pp
 Result ordering is unspecified
 .Pq the index returns results in arbitrary order ;
@@ -145,11 +298,3 @@ and
 .Fl ctime
 are evaluated exactly but cannot narrow the query
 .Pq Spotlight indexes neither .
-.Sh SEE ALSO
-.Xr find 1 ,
-.Xr mdfind 1 ,
-.Xr mdutil 1
-.Pp
-.Lk https://github.com/dnesting/sfind
-— SPEC.md documents every option's index-vs-post-filter determination and
-the verified behavioral details.

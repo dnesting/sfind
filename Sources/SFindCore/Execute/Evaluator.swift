@@ -22,18 +22,33 @@ public final class Evaluator {
     private var execStates: [Primary: ExecState] = [:]
     private var printfWarned: Set<String> = []
     private let promptResponder: ((String) -> Bool)?
+    private let content: ContentResolution
 
     /// Set when any candidate failed to stat (or another non-fatal error occurred);
     /// find's exit status is 1 in that case.
     public private(set) var sawError = false
 
+    /// How -content terms are decided: terms the query itself established are true for
+    /// every index candidate; the rest are looked up in per-term result sets.
+    public struct ContentResolution: Sendable {
+        public var satisfiedByIndex: Set<String>
+        public var membership: [String: Set<String>]
+
+        public init(satisfiedByIndex: Set<String> = [], membership: [String: Set<String>] = [:]) {
+            self.satisfiedByIndex = satisfiedByIndex
+            self.membership = membership
+        }
+    }
+
     public init(
         command: ParsedCommand, environment: PlannerEnvironment, sink: OutputSink,
-        promptResponder: ((String) -> Bool)? = nil
+        promptResponder: ((String) -> Bool)? = nil,
+        content: ContentResolution = ContentResolution()
     ) throws {
         self.command = command
         self.sink = sink
         self.promptResponder = promptResponder
+        self.content = content
         self.nowSeconds = Int64(environment.now.timeIntervalSince1970)
         if command.globals.daystart {
             let start = Calendar.current.startOfDay(for: environment.now)
@@ -113,12 +128,17 @@ public final class Evaluator {
         if let minDepth = command.globals.minDepth, candidate.depth < minDepth { return skipped }
 
         var context = Context(candidate: candidate)
-        guard statInfo(&context) != nil else {
-            if !command.globals.ignoreReaddirRace {
-                sink.diagnostic("\(candidate.path): No such file or directory")
-                sawError = true
+        // Index results may be stale, so their existence is checked up front (find
+        // reports a vanished entry); a walked entry was just read from its directory
+        // and is stat'ed only when a predicate needs it.
+        if candidate.direntType == nil || command.globals.sameDevice {
+            guard statInfo(&context) != nil else {
+                if !command.globals.ignoreReaddirRace {
+                    sink.diagnostic("\(candidate.path): No such file or directory")
+                    sawError = true
+                }
+                return skipped
             }
-            return skipped
         }
         if command.globals.sameDevice, let rootDevice = candidate.rootDevice,
             let info = statInfo(&context), info.device != rootDevice
@@ -126,9 +146,34 @@ public final class Evaluator {
             return skipped
         }
         let matched = try evaluate(command.effectiveExpression, &context)
-        return Outcome(
-            matched: matched, pruned: context.pruneFired,
-            isDirectory: statInfo(&context)?.isDirectory ?? false)
+        var isDirectory = false
+        if context.pruneFired {
+            // Only -prune post-processing needs this; avoid a stat otherwise.
+            if let known = candidate.direntType {
+                isDirectory = known == .directory
+            } else {
+                isDirectory = statInfo(&context)?.isDirectory ?? false
+            }
+        }
+        return Outcome(matched: matched, pruned: context.pruneFired, isDirectory: isDirectory)
+    }
+
+    /// Whether evaluating the candidate would reach -prune, computed without side
+    /// effects (actions are treated as true and nothing is printed, spawned, or
+    /// deleted). Exact when the expression has no -exec family primary, whose real
+    /// exit status could steer evaluation; callers restrict its use accordingly.
+    public func wouldPrune(_ candidate: Candidate) -> Bool {
+        if let maxDepth = command.globals.maxDepth, candidate.depth > maxDepth { return false }
+        if let minDepth = command.globals.minDepth, candidate.depth < minDepth { return false }
+        var context = Context(candidate: candidate, dryRun: true)
+        guard let info = statInfo(&context) else { return false }
+        if command.globals.sameDevice, let rootDevice = candidate.rootDevice,
+            info.device != rootDevice
+        {
+            return false
+        }
+        _ = try? evaluate(command.effectiveExpression, &context)
+        return context.pruneFired
     }
 
     /// Flushes pending -exec … {} + batches; a nonzero child poisons the exit status.
@@ -145,6 +190,8 @@ public final class Evaluator {
         var candidate: Candidate
         var info: FileInfo??  // nil = not fetched; .some(nil) = stat failed
         var pruneFired = false
+        /// Actions are inert (wouldPrune).
+        var dryRun = false
     }
 
     private func statInfo(_ context: inout Context) -> FileInfo? {
@@ -186,6 +233,15 @@ public final class Evaluator {
     }
 
     private func evaluatePrimary(_ primary: Primary, _ context: inout Context) throws -> Bool {
+        if context.dryRun {
+            // Actions are inert and count as true (their documented result).
+            switch primary {
+            case .print, .print0, .quit, .ls, .printf, .exec, .delete:
+                return true
+            default:
+                break
+            }
+        }
         switch primary {
         case .name(let pattern, let caseInsensitive):
             return fnmatchTest(
@@ -236,6 +292,7 @@ public final class Evaluator {
             return !known
 
         case .type(let t):
+            if let known = context.candidate.direntType { return known == t }
             guard let info = statInfo(&context) else { return false }
             return info.fileType == t
 
@@ -327,6 +384,10 @@ public final class Evaluator {
 
         case .depth(let arg):
             return arg.relation.compare(Int64(context.candidate.depth), to: arg.value)
+
+        case .content(let words):
+            if content.satisfiedByIndex.contains(words) { return context.candidate.fromIndex }
+            return content.membership[words]?.contains(context.candidate.path) ?? false
 
         case .prune:
             context.pruneFired = true
